@@ -1,0 +1,32 @@
+import path from "path";
+import fs from "fs";
+import { MITM_DIR } from "../paths.js";
+import { generateRootCA, loadRootCA, generateLeafCert } from "./rootCA.js";
+
+/**
+ * Generate Root CA certificate (one-time setup)
+ * This replaces the old static wildcard cert approach
+ */
+function generateCert() {
+  return generateRootCA();
+}
+
+/**
+ * Get certificate for a specific domain (dynamic generation)
+ * Used by SNICallback in server.js
+ */
+function getCertForDomain(domain) {
+  try {
+    const rootCA = loadRootCA();
+    const leafCert = generateLeafCert(domain, rootCA);
+    return {
+      key: leafCert.key,
+      cert: leafCert.cert
+    };
+  } catch (error) {
+    console.error(`Failed to generate cert for ${domain}:`, error.message);
+    return null;
+  }
+}
+
+export { generateCert, getCertForDomain };

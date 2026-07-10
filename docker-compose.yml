@@ -1,0 +1,35 @@
+services:
+  oninoneproxy:
+    # F4: Build from local source so F1 (Fusion failover) and later enhancements ship
+    # in the running container. Image tag carries the build provenance.
+    image: oninoneproxy:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oninoneproxy
+    restart: always
+    ports:
+      - "20130:20130"
+    volumes:
+      - oninoneproxy-data:/app/data
+    env_file:
+      - .env
+    environment:
+      DATA_DIR: /app/data
+      PORT: "20130"
+      HOSTNAME: "0.0.0.0"
+      NODE_ENV: production
+      HEADROOM_URL: http://headroom:8787
+    depends_on:
+      - headroom
+
+  headroom:
+    image: ghcr.io/chopratejas/headroom:latest
+    container_name: headroom
+    restart: always
+    ports:
+      - "8787:8787"
+
+volumes:
+  oninoneproxy-data:
+    name: oninoneproxy-data
