@@ -138,13 +138,13 @@ Main flow modules:
 Primary state DB:
 
 - `src/lib/localDb.js`
-- file: `${DATA_DIR}/db.json` (or `~/.9router/db.json` when `DATA_DIR` is unset)
+- file: `${DATA_DIR}/db.json` (or `~/.oninoneproxy/db.json` when `DATA_DIR` is unset)
 - entities: providerConnections, providerNodes, modelAliases, combos, apiKeys, settings, pricing
 
 Usage DB:
 
 - `src/lib/usageDb.js`
-- files: `~/.9router/usage.json`, `~/.9router/log.txt`
+- files: `~/.oninoneproxy/usage.json`, `~/.oninoneproxy/log.txt`
 - note: currently independent from `DATA_DIR`
 
 ## 4) Auth + Security Surfaces
@@ -377,9 +377,9 @@ erDiagram
 
 Physical storage files:
 
-- main state: `${DATA_DIR}/db.json` (or `~/.9router/db.json`)
-- usage stats: `~/.9router/usage.json`
-- request log lines: `~/.9router/log.txt`
+- main state: `${DATA_DIR}/db.json` (or `~/.oninoneproxy/db.json`)
+- usage stats: `~/.oninoneproxy/usage.json`
+- request log lines: `~/.oninoneproxy/log.txt`
 - optional translator/request debug sessions: `<repo>/logs/...`
 
 ## Deployment Topology
@@ -392,7 +392,7 @@ flowchart LR
     end
 
     subgraph ContainerOrProcess[9Router Runtime]
-        Next[Next.js Server\nPORT=20128]
+        Next[Next.js Server\nPORT=20130]
         Core[SSE Core + Executors]
         MainDB[(db.json)]
         UsageDB[(usage.json/log.txt)]
@@ -523,7 +523,7 @@ Runtime visibility sources:
 ## Security-Sensitive Boundaries
 
 - JWT secret (`JWT_SECRET`) secures dashboard session cookie verification/signing
-- Initial password fallback (`INITIAL_PASSWORD`, default `123456`) must be overridden in real deployments
+- Initial password fallback (`INITIAL_PASSWORD`) must be overridden in real deployments
 - API key HMAC secret (`API_KEY_SECRET`) secures generated local API key format
 - Provider secrets (API keys/tokens) are persisted in local DB and should be protected at filesystem level
 - Cloud sync endpoints rely on API key auth + machine id semantics
@@ -542,16 +542,16 @@ Environment variables actively used by code:
 
 ## Known Architectural Notes
 
-1. `usageDb` currently stores under `~/.9router` and does not follow `DATA_DIR`.
+1. `usageDb` currently stores under `~/.oninoneproxy` and does not follow `DATA_DIR`.
 2. `/api/v1/route.js` returns a static model list and is not the main models source used by `/v1/models`.
 3. Request logger writes full headers/body when enabled; treat log directory as sensitive.
 4. Cloud behavior depends on correct `NEXT_PUBLIC_BASE_URL` and cloud endpoint reachability.
 
 ## Operational Verification Checklist
 
-- Build from source: `cd /root/dev/9router && npm run build`
-- Build Docker image: `cd /root/dev/9router && docker build -t 9router .`
+- Build from source: `cd /path/to/oninoneproxy && npm run build`
+- Build Docker image: `cd /path/to/oninoneproxy && docker build -t oninoneproxy .`
 - Start service and verify:
 - `GET /api/settings`
 - `GET /api/v1/models`
-- CLI target base URL should be `http://<host>:20128/v1` when `PORT=20128`
+- CLI target base URL should be `http://<host>:20130/v1` when `PORT=20130`

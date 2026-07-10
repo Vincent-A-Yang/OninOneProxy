@@ -57,7 +57,7 @@
       "User-Agent": "iFlow-Cli"
     },
     "clientId": "10009311001",
-    "clientSecret": "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW",
+    "clientSecret": "YOUR_IFLOW_CLIENT_SECRET",
     "tokenUrl": "https://iflow.cn/oauth/token",
     "authUrl": "https://iflow.cn/oauth"
   },

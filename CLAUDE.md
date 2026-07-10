@@ -10,7 +10,7 @@ OninOneProxy (`oninoneproxy`) — a unified AI API gateway + Next.js dashboard. 
 
 Two published artifacts live in this one repo:
 - The **dashboard + gateway** (root `package.json`, `oninoneproxy`) — the Next.js server that does the actual routing.
-- The **CLI launcher** (`cli/`, published to npm as `9router`) — a separate package that installs/starts the server and manages the tray. It has its own `package.json`, version, and build.
+- The **CLI launcher** (`cli/`, published to npm as `oninoneproxy-cli`) — a separate package that installs/starts the server and manages the tray. It has its own `package.json`, version, and build.
 
 The code lives in `src/` (Next.js app + dashboard/compat APIs), `open-sse/` (the provider-agnostic routing/translation engine), `cli/` (the launcher package), and `tests/`.
 
@@ -20,11 +20,11 @@ Dashboard/gateway (run from repo root):
 ```bash
 cp .env.example .env
 npm install
-PORT=20128 NEXT_PUBLIC_BASE_URL=http://localhost:20128 npm run dev   # dev (webpack, port 20127 by default via next dev)
-npm run build && PORT=20128 HOSTNAME=0.0.0.0 npm run start           # production
+PORT=20130 NEXT_PUBLIC_BASE_URL=http://localhost:20130 npm run dev   # dev (webpack, port 20127 by default via next dev)
+npm run build && PORT=20130 HOSTNAME=0.0.0.0 npm run start           # production
 ```
 - Bun variants: `npm run dev:bun` / `build:bun` / `start:bun`.
-- Default runtime port is **20128** (dashboard at `/dashboard`, API at `/v1`).
+- Default runtime port is **20130** (dashboard at `/dashboard`, API at `/v1`).
 - Lint: `npx eslint .` (config `eslint.config.mjs`, extends `eslint-config-next`).
 
 CLI package (`cli/`):

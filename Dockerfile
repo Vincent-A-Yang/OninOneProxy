@@ -20,7 +20,7 @@ RUN npm run build
 FROM ${NODE_IMAGE} AS runner
 WORKDIR /app
 
-LABEL org.opencontainers.image.title="9router"
+LABEL org.opencontainers.image.title="oninoneproxy"
 
 ENV NODE_ENV=production
 ENV PORT=20130

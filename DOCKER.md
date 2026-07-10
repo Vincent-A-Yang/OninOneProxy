@@ -18,14 +18,14 @@ docker build -t oninoneproxy .
 
 ```bash
 docker run -d \
-  -p 20128:20128 \
+  -p 20130:20130 \
   -v "$HOME/.oninoneproxy:/app/data" \
   -e DATA_DIR=/app/data \
   --name oninoneproxy \
   oninoneproxy:latest
 ```
 
-App listens on port `20128`. Open: http://localhost:20128
+App listens on port `20130`. Open: http://localhost:20130
 
 ## Using docker-compose
 
@@ -70,10 +70,10 @@ Container path: `/app/data/db/data.sqlite`
 
 ```bash
 docker run -d \
-  -p 20128:20128 \
+  -p 20130:20130 \
   -v "$HOME/.oninoneproxy:/app/data" \
   -e DATA_DIR=/app/data \
-  -e PORT=20128 \
+  -e PORT=20130 \
   -e HOSTNAME=0.0.0.0 \
   -e DEBUG=true \
   --name oninoneproxy \
@@ -89,7 +89,7 @@ services:
   oninoneproxy:
     build: .
     ports:
-      - "20128:20128"
+      - "20130:20130"
     volumes:
       - "$HOME/.oninoneproxy:/app/data"
     environment:
@@ -126,7 +126,7 @@ docker rm -f oninoneproxy
 ```bash
 docker build -t oninoneproxy .
 
-docker run --rm -p 20128:20128 \
+docker run --rm -p 20130:20130 \
   -v "$HOME/.oninoneproxy:/app/data" \
   -e DATA_DIR=/app/data \
   oninoneproxy

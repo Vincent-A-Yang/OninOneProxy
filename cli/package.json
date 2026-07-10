@@ -1,9 +1,9 @@
 {
-  "name": "9router",
+  "name": "oninoneproxy-cli",
   "version": "0.5.20",
   "description": "OninOneProxy CLI launcher - derivative of 9Router. Starts and manages the OninOneProxy server.", "repository": { "type": "git", "url": "https://github.com/Vincent-A-Yang/OninOneProxy.git", "directory": "cli" }, "author": "Vincent-A-Yang (derivative of 9Router by decolua)",
   "bin": {
-    "9router": "./cli.js"
+    "oninoneproxy": "./cli.js"
   },
   "files": [
     "cli.js",
@@ -34,7 +34,6 @@
     "node": ">=18.0.0"
   },
   "keywords": [
-    "9router",
     "cli",
     "proxy",
     "ai",

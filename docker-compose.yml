@@ -21,9 +21,13 @@ services:
       NODE_ENV: production
       HEADROOM_URL: http://headroom:8787
     depends_on:
-      - headroom
+      headroom:
+        condition: service_started
 
   headroom:
+    # NOTE: headroom is an optional companion service and is disabled by default.
+    # The upstream image has no version tags other than :latest; pin to a digest
+    # for reproducible deployments once a stable tag is published.
     image: ghcr.io/chopratejas/headroom:latest
     container_name: headroom
     restart: always
