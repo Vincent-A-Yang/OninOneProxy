@@ -7,7 +7,7 @@ import {
   getProxyPoolById,
 } from "@/models";
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
-import { AI_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
+import { AI_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
 import { normalizeProviderId, normalizeProviderSpecificData, detectProviderNameConflict } from "@/lib/providerNormalization";
 
 export const dynamic = "force-dynamic";
@@ -119,10 +119,14 @@ export async function POST(request) {
     // Dual-auth providers (e.g. codebuddy-cn, xai) live under category "oauth" but also
     // accept an API key via authModes — they aren't in APIKEY_PROVIDERS, so allow them here.
     const supportsApiKeyMode = !!AI_PROVIDERS[provider]?.authModes?.includes("apikey");
+    // noAuth providers (e.g. opencode, mimo-free) require no credentials and
+    // support multiple virtual instances (OmniRoute-style one-click add).
+    const isNoAuthProvider = !!FREE_PROVIDERS[provider]?.noAuth;
     const isValidProvider = APIKEY_PROVIDERS[provider] ||
       FREE_TIER_PROVIDERS[provider] ||
       supportsApiKeyMode ||
       isWebCookieProvider ||
+      isNoAuthProvider ||
       isOpenAICompatibleProvider(provider) ||
       isAnthropicCompatibleProvider(provider) ||
       isCustomEmbeddingProvider(provider);
@@ -130,12 +134,25 @@ export async function POST(request) {
     if (!provider || !isValidProvider) {
       return NextResponse.json({ error: "Invalid provider" }, { status: 400 });
     }
-    if (!apiKey && provider !== "ollama-local") {
+    // noAuth providers don't need an API key. Otherwise require one
+    // (ollama-local is exempt — it uses a baseUrl in providerSpecificData).
+    if (!apiKey && !isNoAuthProvider && provider !== "ollama-local") {
       return NextResponse.json({ error: `${isWebCookieProvider ? "Cookie value" : "API Key"} is required` }, { status: 400 });
     }
-    const connectionName = name || displayName || AI_PROVIDERS[provider]?.name;
+    // For noAuth providers, synthesize a default instance name if none provided.
+    // The repo layer also auto-numbers when name is null/empty, but passing
+    // an explicit name keeps the response self-describing for the UI.
+    let connectionName = name || displayName;
     if (!connectionName) {
-      return NextResponse.json({ error: "Name is required" }, { status: 400 });
+      if (isNoAuthProvider) {
+        // Leave null — connectionsRepo auto-generates "{ProviderName} #{N}".
+        connectionName = null;
+      } else {
+        connectionName = AI_PROVIDERS[provider]?.name;
+        if (!connectionName) {
+          return NextResponse.json({ error: "Name is required" }, { status: 400 });
+        }
+      }
     }
 
     let providerSpecificData = normalizeProviderSpecificData(provider, body, body.providerSpecificData);
@@ -188,7 +205,7 @@ export async function POST(request) {
 
     const newConnection = await createProviderConnection({
       provider,
-      authType: isWebCookieProvider ? "cookie" : "apikey",
+      authType: isNoAuthProvider ? "noauth" : (isWebCookieProvider ? "cookie" : "apikey"),
       name: connectionName,
       apiKey: apiKey || "",
       priority: priority || 1,
@@ -200,7 +217,9 @@ export async function POST(request) {
       // don't send the field — including the legacy providers/new form which
       // sets isActive:true by default). Only explicit `false` disables.
       isActive: body.isActive !== false,
-      testStatus: testStatus || "unknown",
+      // noAuth providers have no credentials to verify — mark them active
+      // immediately so they show as "Connected" without a manual test.
+      testStatus: testStatus || (isNoAuthProvider ? "active" : "unknown"),
     });
 
     // Hide sensitive fields

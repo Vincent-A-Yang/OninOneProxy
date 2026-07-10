@@ -256,6 +256,34 @@ export default function ProvidersPage() {
     }
   };
 
+  // One-click add for noAuth free providers (OmniRoute-style virtual instances).
+  // Creates a connection with no API key — the server assigns authType "noauth"
+  // and auto-generates an instance name like "OpenCode #1".
+  const handleAddNoAuthInstance = async (providerId) => {
+    try {
+      const res = await fetch("/api/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: providerId, isActive: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        notify.error(data.error || "Failed to add instance");
+        return;
+      }
+      // Refresh connections list so the new instance shows up immediately
+      const fresh = await fetch("/api/providers", { cache: "no-store" });
+      if (fresh.ok) {
+        const freshData = await fresh.json();
+        setConnections(freshData.connections || []);
+      }
+      notify.success("Instance added");
+    } catch (error) {
+      console.log("Error adding noAuth instance:", error);
+      notify.error("Failed to add instance");
+    }
+  };
+
   const compatibleProviders = providerNodes
     .filter((node) => node.type === "openai-compatible")
     .map((node) => ({
@@ -470,8 +498,16 @@ export default function ProvidersPage() {
             // so the card total matches the provider detail page (#kiro-apikey).
             // Kiro's headless api-key flow persists authType "api_key" (underscore),
             // while generic apikey providers use "apikey" — include both spellings.
-            const freeAuthTypes =
-              key === "kiro" ? ["oauth", "apikey", "api_key"] : "oauth";
+            // noAuth providers (opencode, mimo-free) persist authType "noauth" —
+            // include it so the card shows the correct instance count.
+            let freeAuthTypes;
+            if (key === "kiro") {
+              freeAuthTypes = ["oauth", "apikey", "api_key"];
+            } else if (info.noAuth) {
+              freeAuthTypes = ["noauth"];
+            } else {
+              freeAuthTypes = "oauth";
+            }
             return (
               <ProviderCard
                 key={key}
@@ -482,6 +518,7 @@ export default function ProvidersPage() {
                 onToggle={(active) =>
                   handleToggleProvider(key, freeAuthTypes, active)
                 }
+                onAddNoAuth={info.noAuth ? () => handleAddNoAuthInstance(key) : undefined}
               />
             );
           })}
@@ -620,8 +657,8 @@ export default function ProvidersPage() {
   );
 }
 
-function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
-  const { connected, error, errorCode, errorTime, allDisabled } = stats;
+function ProviderCard({ providerId, provider, stats, authType, onToggle, onAddNoAuth }) {
+  const { connected, error, errorCode, errorTime, allDisabled, total } = stats;
   const isNoAuth = !!provider.noAuth;
 
   const dotColors = {
@@ -675,7 +712,15 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
                     </span>
                   </Badge>
                 ) : isNoAuth ? (
-                  <Badge variant="success" size="sm" dot>Ready</Badge>
+                  <>
+                    {total > 0 ? (
+                      <Badge variant="success" size="sm" dot>
+                        {total} Instance{total > 1 ? "s" : ""}
+                      </Badge>
+                    ) : (
+                      <Badge variant="success" size="sm" dot>Ready</Badge>
+                    )}
+                  </>
                 ) : (
                   <>
                     {getStatusDisplay(connected, error, errorCode)}
@@ -688,6 +733,24 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle }) {
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {isNoAuth && onAddNoAuth && (
+              <div
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onAddNoAuth();
+                }}
+              >
+                <Button
+                  size="sm"
+                  icon="add"
+                  variant="secondary"
+                  title="Add a new virtual instance (no API key required)"
+                >
+                  Add
+                </Button>
+              </div>
+            )}
             {stats.total > 0 && (
               <div
                 className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100"
@@ -719,15 +782,19 @@ ProviderCard.propTypes = {
     name: PropTypes.string.isRequired,
     color: PropTypes.string,
     textIcon: PropTypes.string,
+    noAuth: PropTypes.bool,
   }).isRequired,
   stats: PropTypes.shape({
     connected: PropTypes.number,
     error: PropTypes.number,
     errorCode: PropTypes.string,
     errorTime: PropTypes.string,
+    total: PropTypes.number,
+    allDisabled: PropTypes.bool,
   }).isRequired,
   authType: PropTypes.string,
   onToggle: PropTypes.func,
+  onAddNoAuth: PropTypes.func,
 };
 
 function ApiKeyProviderCard({

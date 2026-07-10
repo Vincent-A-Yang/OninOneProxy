@@ -483,7 +483,94 @@ const FUSION_DEFAULTS = {
   // extra slots queue in collectPanel (they still start, but bounded by this
   // concurrency). Set to 0 or undefined to disable.
   maxPanelConcurrency: 8,
+  // Roles: optional { "model-string": "role-name" } map that narrows each
+  // panel member's focus so the judge synthesizes diverse, complementary
+  // answers instead of N near-duplicates. Inspired by CrewAI (role/goal/
+  // backstory), ChatDev (software-company roles), and Multi-Agent Debate
+  // (ICML 2024 — devil's advocate improves factuality). When absent/empty,
+  // every panel member runs unroleed — identical to the original Fusion.
+  roles: null,
+  // judgeRole: optional variant name that prepends a directive to the judge
+  // prompt (e.g. "judge-strict" flags unsupported claims). Empty/unknown →
+  // default five-dimension analysis.
+  judgeRole: null,
 };
+
+// === Roles: per-model role prompts for specialized panel members ===
+// A role narrows a panel member's focus. Backward compatible: when no `roles`
+// map is configured, every panel member runs unroleed (identical to the
+// original Fusion behavior — no system message injected, zero overhead).
+// Role prompts deliberately do NOT require tool calling, so Poe-style models
+// (minimax-m3-t etc. that don't support tools) work as non-tool roles too.
+const ROLE_PROMPTS = {
+  researcher:
+    "You are a meticulous researcher. Prioritize factual accuracy and breadth: gather relevant information, note where evidence is strong vs weak, and flag knowledge gaps explicitly. Cite specifics where possible. Prefer being thorough and correct over stylistic polish.",
+  coder:
+    "You are a senior software engineer. Prioritize correctness and robustness: produce runnable, well-structured code that handles edge cases. Explain key decisions briefly but let the code carry the answer. Guard against off-by-one errors, unhandled exceptions, and untested assumptions.",
+  reviewer:
+    "You are a rigorous code and design reviewer. Prioritize finding flaws: evaluate the request for incorrect assumptions, security risks, race conditions, and missing requirements. Be concrete about failure modes and how to fix them. Do not rubber-stamp — surface what others miss.",
+  summarizer:
+    "You are a clarity specialist. Prioritize structure and brevity: distill the request into its essential points, produce a clear overview with sensible headings, and eliminate redundancy. Make the answer easy to scan and act on.",
+  "creative-writer":
+    "You are a creative thinker. Prioritize originality and range: explore diverse angles, novel analogies, and unconventional approaches. Avoid the obvious first answer; generate options others might not consider.",
+  "devils-advocate":
+    "You are the designated skeptic. Prioritize finding holes: challenge the consensus answer, surface counterarguments, stress-test assumptions, and identify edge cases where the obvious approach fails. Be specific about what could go wrong and why.",
+  analyst:
+    "You are a systems analyst. Prioritize structured decomposition: break the request into components, constraints, and trade-offs. Map inputs, outputs, and dependencies. Make implicit assumptions explicit.",
+};
+
+// Judge role variants: optional prefixes prepended to the default five-dimension
+// analysis directive when `judgeRole` is configured. Empty/unknown → default.
+const JUDGE_ROLE_PREFIXES = {
+  "judge-strict":
+    "Apply extra scrutiny: explicitly flag any claim in the panel answers that lacks supporting evidence or appears fabricated. Refuse to carry forward unsupported assertions into the final answer. ",
+  "judge-synthesizer":
+    "Favor narrative coherence: weave the panel's best points into one fluid, well-structured answer. Minimize visible 'analysis residue' — the reader should see one confident voice, not a committee. ",
+  "judge-code":
+    "For code requests: select the most correct implementation across the panel, merge complementary test coverage, and explicitly reject solutions with unhandled edge cases or security flaws. ",
+};
+
+// Resolve a model's role prompt. Returns "" (empty) for unroleed/generalist,
+// so the caller can skip the system-message injection entirely.
+function getRolePrompt(roles, modelStr) {
+  if (!roles || typeof roles !== "object") return "";
+  const role = roles[modelStr];
+  if (typeof role !== "string" || !role) return "";
+  const prompt = ROLE_PROMPTS[role];
+  return typeof prompt === "string" ? prompt : "";
+}
+
+// Clone a panel body and prepend a role system message. Only called when a
+// role prompt exists (non-empty), so unroleed models reuse the shared panelBody
+// with zero overhead. Supports OpenAI/Claude messages[], Responses input[],
+// and Gemini contents[] shapes — same coverage as appendUserTurn.
+function buildPanelBodyWithRole(panelBody, rolePrompt) {
+  const next = { ...panelBody };
+  const sysMsg = { role: "system", content: rolePrompt };
+  if (Array.isArray(panelBody.messages)) {
+    next.messages = [sysMsg, ...panelBody.messages];
+  } else if (Array.isArray(panelBody.input)) {
+    // OpenAI Responses: input[] uses {role:"system"} too.
+    next.input = [sysMsg, ...panelBody.input];
+  } else if (Array.isArray(panelBody.contents)) {
+    // Gemini has no "system" role in contents[]; prepend a dedicated user
+    // turn carrying the role text so the model sees it as leading context.
+    next.contents = [
+      { role: "user", parts: [{ text: rolePrompt }] },
+      ...panelBody.contents,
+    ];
+  } else {
+    next.messages = [sysMsg];
+  }
+  return next;
+}
+
+// Resolve a judge role prefix. Returns "" for the default judge behavior.
+function getJudgeRolePrefix(judgeRole) {
+  if (typeof judgeRole !== "string" || !judgeRole) return "";
+  const prefix = JUDGE_ROLE_PREFIXES[judgeRole];
+  return typeof prefix === "string" ? prefix : "";
+}
 
 // Resolve a Response (or {__error}) within ms; the loser keeps running but is ignored.
 function withTimeout(promise, ms) {
@@ -726,6 +813,12 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     }
   } catch { /* fail-open */ }
 
+  // Roles: optional { "model-string": "role-name" } map. When a slot's
+  // primary model has a role, its panel body is cloned with a role system
+  // message prepended (buildPanelBodyWithRole). Unroleed slots reuse the
+  // shared panelBody with zero overhead — backward compatible.
+  const roles = cfg.roles || null;
+
   const t0 = Date.now();
   // F4.3: Cap concurrent panel calls so a large D fan-out doesn't hammer
   // upstream. `runner` is invoked lazily by runWithConcurrency — only up to
@@ -735,7 +828,13 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const calls = runWithConcurrency(
     normalized,
     cfg.maxPanelConcurrency,
-    (slot) => withFailover(slot, panelBody, handleSingleModel, cfg, log)
+    (slot) => {
+      const rolePrompt = getRolePrompt(roles, slot.primary);
+      // Only clone when a role prompt exists; otherwise reuse the shared
+      // panelBody (identical to the original Fusion behavior).
+      const slotBody = rolePrompt ? buildPanelBodyWithRole(panelBody, rolePrompt) : panelBody;
+      return withFailover(slot, slotBody, handleSingleModel, cfg, log);
+    }
   );
   const settled = await collectPanel(calls, { ...cfg, minPanel });
   log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms`);
@@ -783,7 +882,11 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   }
 
   // 4. Judge analyzes + writes one final answer (streams to client if requested).
-  const judgeBody = appendUserTurn(body, buildJudgePrompt(answers));
-  log.info("FUSION", `Judging ${answers.length} answers with ${judge}`);
+  // judgeRole: optional variant prefix (e.g. "judge-strict") prepended to the
+  // judge prompt to bias the synthesis. Empty/unknown → default behavior.
+  const judgePrefix = getJudgeRolePrefix(cfg.judgeRole);
+  const judgePrompt = judgePrefix ? judgePrefix + buildJudgePrompt(answers) : buildJudgePrompt(answers);
+  const judgeBody = appendUserTurn(body, judgePrompt);
+  log.info("FUSION", `Judging ${answers.length} answers with ${judge}${judgePrefix ? ` [role=${cfg.judgeRole}]` : ""}`);
   return handleSingleModel(judgeBody, judge);
 }

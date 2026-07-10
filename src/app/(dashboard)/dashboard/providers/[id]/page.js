@@ -107,7 +107,30 @@ export default function ProviderDetailPage() {
     setShowAddApiKeyModal(true);
   };
 
-  const triggerAddConnection = () => {
+  const triggerAddConnection = async () => {
+    // One-click add for noAuth free providers (OmniRoute-style virtual
+    // instances). Creates a connection with no credentials; the server
+    // assigns authType "noauth" and auto-generates "{ProviderName} #{N}".
+    if (isFreeNoAuth) {
+      try {
+        setAddConnectionError("");
+        const res = await fetch("/api/providers", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ provider: providerId, isActive: true }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setAddConnectionError(data.error || "Failed to add instance");
+          return;
+        }
+        await fetchConnections();
+      } catch (error) {
+        console.log("Error adding noauth instance:", error);
+        setAddConnectionError("Failed to add instance");
+      }
+      return;
+    }
     if (isOAuth) {
       triggerOAuthConnection();
       return;
@@ -1369,10 +1392,10 @@ export default function ProviderDetailPage() {
       )}
 
       {/* Connections */}
-      {isFreeNoAuth ? (
+      {isFreeNoAuth && (
         <NoAuthProxyCard providerId={providerId} />
-      ) : (
-        <Card>
+      )}
+      <Card>
           <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <h2 className="text-lg font-semibold">Connections</h2>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -1448,7 +1471,7 @@ export default function ProviderDetailPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
                 <div className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-primary/10 text-primary shrink-0">
-                  <span className="material-symbols-outlined text-[18px]">{isOAuth ? "lock" : "key"}</span>
+                  <span className="material-symbols-outlined text-[18px]">{isFreeNoAuth ? "bolt" : (isOAuth ? "lock" : "key")}</span>
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm text-text-muted">No connections yet</p>
@@ -1483,10 +1506,10 @@ export default function ProviderDetailPage() {
                     )}
                     <Button
                       size="sm"
-                      icon="add"
+                      icon={isFreeNoAuth ? "bolt" : "add"}
                       onClick={triggerAddConnection}
                     >
-                      {isCompatible ? "Add API Key" : (providerId === "iflow" ? "OAuth" : "Add Connection")}
+                      {isFreeNoAuth ? "Add Instance" : (isCompatible ? "Add API Key" : (providerId === "iflow" ? "OAuth" : "Add Connection"))}
                     </Button>
                   </>
                 )}
@@ -1573,11 +1596,11 @@ export default function ProviderDetailPage() {
                   ) : (
                     <Button
                       size="sm"
-                      icon="add"
+                      icon={isFreeNoAuth ? "bolt" : "add"}
                       onClick={triggerAddConnection}
                       className="w-full sm:w-auto"
                     >
-                      Add
+                      {isFreeNoAuth ? "Add Instance" : "Add"}
                     </Button>
                   )}
                 </div>
@@ -1585,7 +1608,6 @@ export default function ProviderDetailPage() {
             </>
           )}
         </Card>
-      )}
 
       {/* Models */}
       <Card>

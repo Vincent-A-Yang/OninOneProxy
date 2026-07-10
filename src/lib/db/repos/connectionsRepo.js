@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { AI_PROVIDERS } from "@/shared/constants/providers";
 
 const OPTIONAL_FIELDS = [
   "displayName", "email", "globalPriority", "defaultModel",
@@ -134,6 +135,15 @@ export async function createProviderConnection(data) {
     let connectionName = data.name || null;
     if (!connectionName && (data.authType === "oauth" || data.authType === "access_token")) {
       connectionName = data.email || `Account ${all.length + 1}`;
+    }
+    // noAuth providers (e.g. opencode, mimo-free) support multiple virtual
+    // instances — auto-generate "{ProviderName} #{N}" so each instance is
+    // distinguishable in the connection list (OmniRoute-style one-click add).
+    if (!connectionName && data.authType === "noauth") {
+      const providerName = AI_PROVIDERS[data.provider]?.name || data.provider;
+      // Count existing noauth instances for this provider to pick the next number.
+      const existingCount = all.filter(c => c.authType === "noauth").length;
+      connectionName = `${providerName} #${existingCount + 1}`;
     }
     let connectionPriority = data.priority;
     if (!connectionPriority) {

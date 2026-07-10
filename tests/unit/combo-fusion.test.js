@@ -632,4 +632,222 @@ describe("fusion combo", () => {
     // Allow generous headroom for CI jitter but assert it's well under serial.
     expect(elapsed).toBeLessThan(130);
   });
+
+  // ─── Roles: per-model role prompt injection ────────────────────────────────
+
+  // R1: a roleed model receives a system message prepended with the role prompt.
+  it("R1: injects role system message when roles config maps a model", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "p/judge") return okResponse("FINAL");
+      return okResponse(`ans-${model}`);
+    });
+
+    await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { roles: { "p/a": "researcher" } },
+    });
+
+    const panelCalls = handleSingleModel.mock.calls.filter(
+      ([, m, isPanel]) => m !== "p/judge" && isPanel === true
+    );
+    // p/a is roleed → its body has a leading system message.
+    const callA = panelCalls.find(([, m]) => m === "p/a");
+    const bodyA = callA[0];
+    expect(bodyA.messages[0]).toEqual({ role: "system", content: expect.stringContaining("meticulous researcher") });
+    expect(bodyA.messages[1]).toEqual({ role: "user", content: "Q" });
+    expect(bodyA.messages.length).toBe(2);
+
+    // p/b is unroleed → no system message injected, body unchanged.
+    const callB = panelCalls.find(([, m]) => m === "p/b");
+    const bodyB = callB[0];
+    expect(bodyB.messages[0]).toEqual({ role: "user", content: "Q" });
+    expect(bodyB.messages.length).toBe(1);
+    // Unroleed body must not carry a system message at all.
+    expect(bodyB.messages.some((m) => m.role === "system")).toBe(false);
+  });
+
+  // R2: regression — no roles config → panel bodies are byte-identical to the
+  // original Fusion behavior (no system message, same message count).
+  it("R2: no roles config → panel bodies unchanged (backward compatible)", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "p/judge") return okResponse("FINAL");
+      return okResponse(`ans-${model}`);
+    });
+
+    const body = { messages: [{ role: "user", content: "Q" }] };
+    await handleFusionChat({
+      body,
+      models: ["p/a", "p/b", "p/c"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      // No `roles` in tuning → cfg.roles is null.
+    });
+
+    const panelCalls = handleSingleModel.mock.calls.filter(
+      ([, m, isPanel]) => m !== "p/judge" && isPanel === true
+    );
+    expect(panelCalls.length).toBe(3);
+    for (const [panelBody] of panelCalls) {
+      // Exactly one message — the original user turn. No system message added.
+      expect(panelBody.messages.length).toBe(1);
+      expect(panelBody.messages[0]).toEqual({ role: "user", content: "Q" });
+      expect(panelBody.messages.some((m) => m.role === "system")).toBe(false);
+    }
+  });
+
+  // R3: roles config present but model not in map → unroleed (no system msg).
+  it("R3: roles config present but model unmapped → unroleed body", async () => {
+    const handleSingleModel = vi.fn(async () => okResponse("ans"));
+    await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { roles: { "p/nonexistent": "researcher" } },
+    });
+
+    const panelCalls = handleSingleModel.mock.calls.filter(
+      ([, m, isPanel]) => m !== "p/judge" && isPanel === true
+    );
+    for (const [panelBody] of panelCalls) {
+      expect(panelBody.messages.length).toBe(1);
+      expect(panelBody.messages.some((m) => m.role === "system")).toBe(false);
+    }
+  });
+
+  // R4: unknown role name → treated as unroleed (getRolePrompt returns "").
+  it("R4: unknown role name → unroleed body (no crash)", async () => {
+    const handleSingleModel = vi.fn(async () => okResponse("ans"));
+    await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { roles: { "p/a": "totally-bogus-role" } },
+    });
+
+    const panelCalls = handleSingleModel.mock.calls.filter(
+      ([, m, isPanel]) => m !== "p/judge" && isPanel === true
+    );
+    for (const [panelBody] of panelCalls) {
+      expect(panelBody.messages.length).toBe(1);
+      expect(panelBody.messages.some((m) => m.role === "system")).toBe(false);
+    }
+  });
+
+  // R5: Poe-style models (no tools support) with a role still get tools stripped.
+  // Role prompts never require tool calling, so a non-tool model works as a role.
+  it("R5: roleed panel model still has tools stripped", async () => {
+    const handleSingleModel = vi.fn(async () => okResponse("ans"));
+    await handleFusionChat({
+      body: {
+        messages: [{ role: "user", content: "Q" }],
+        tools: [{ type: "function", function: { name: "search" } }],
+        tool_choice: "auto",
+      },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { roles: { "p/a": "researcher", "p/b": "coder" } },
+    });
+
+    const panelCalls = handleSingleModel.mock.calls.filter(
+      ([, m, isPanel]) => m !== "p/judge" && isPanel === true
+    );
+    for (const [panelBody] of panelCalls) {
+      expect(panelBody.tools).toBeUndefined();
+      expect(panelBody.tool_choice).toBeUndefined();
+      // System message present (both models are roleed).
+      expect(panelBody.messages[0].role).toBe("system");
+    }
+  });
+
+  // R6: judgeRole prefix is prepended to the judge prompt.
+  it("R6: judgeRole prefix prepended to judge prompt", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "p/judge") return okResponse("FINAL");
+      return okResponse(`ans-${model}`);
+    });
+
+    await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { judgeRole: "judge-strict" },
+    });
+
+    const judgeCall = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
+    const judgeText = judgeCall[0].messages.at(-1).content;
+    // The strict prefix must appear before the standard JUDGE directive.
+    expect(judgeText.startsWith("Apply extra scrutiny:")).toBe(true);
+    expect(judgeText).toContain("You are the JUDGE");
+    // Panel answers are still present.
+    expect(judgeText).toContain("ans-p/a");
+    expect(judgeText).toContain("ans-p/b");
+  });
+
+  // R7: judgeRole unknown → default judge prompt (no prefix, no crash).
+  it("R7: unknown judgeRole → default judge prompt (no crash)", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "p/judge") return okResponse("FINAL");
+      return okResponse(`ans-${model}`);
+    });
+
+    await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Q" }] },
+      models: ["p/a", "p/b"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: { judgeRole: "does-not-exist" },
+    });
+
+    const judgeCall = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
+    const judgeText = judgeCall[0].messages.at(-1).content;
+    // No prefix → starts with the standard JUDGE directive.
+    expect(judgeText.startsWith("You are the JUDGE")).toBe(true);
+  });
+
+  // R8: roles + judgeRole combined — both panel and judge get role directives.
+  it("R8: roles and judgeRole compose correctly", async () => {
+    const handleSingleModel = vi.fn(async (_body, model) => {
+      if (model === "p/judge") return okResponse("FINAL");
+      return okResponse(`ans-${model}`);
+    });
+
+    await handleFusionChat({
+      body: { messages: [{ role: "user", content: "Write a function" }] },
+      models: ["p/coder", "p/reviewer"],
+      handleSingleModel,
+      log,
+      judgeModel: "p/judge",
+      tuning: {
+        roles: { "p/coder": "coder", "p/reviewer": "reviewer" },
+        judgeRole: "judge-code",
+      },
+    });
+
+    const panelCalls = handleSingleModel.mock.calls.filter(
+      ([, m, isPanel]) => m !== "p/judge" && isPanel === true
+    );
+    const coderBody = panelCalls.find(([, m]) => m === "p/coder")[0];
+    const reviewerBody = panelCalls.find(([, m]) => m === "p/reviewer")[0];
+
+    expect(coderBody.messages[0].content).toContain("senior software engineer");
+    expect(reviewerBody.messages[0].content).toContain("rigorous code and design reviewer");
+
+    const judgeText = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge")[0].messages.at(-1).content;
+    expect(judgeText.startsWith("For code requests:")).toBe(true);
+    expect(judgeText).toContain("ans-p/coder");
+  });
 });
