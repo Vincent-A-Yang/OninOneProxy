@@ -1,7 +1,7 @@
 {
   "name": "oninoneproxy",
   "version": "0.5.20",
-  "description": "Unified AI API Gateway — Multi-provider routing, token saving, semantic cache, and intelligent fallback. OpenAI-compatible endpoint for Claude Code, Cursor, Codex, and more. Based on 9Router.",
+  "description": "Unified AI API Gateway — Multi-provider routing, token saving, semantic cache, and intelligent fallback. OpenAI-compatible endpoint for Claude Code, Cursor, Codex, and more.",
   "repository": {
     "type": "git",
     "url": "https://github.com/Vincent-A-Yang/OninOneProxy.git"
@@ -61,9 +61,13 @@
     "@tailwindcss/postcss": "^4.1.18",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
-    "postcss": "^8.5.6",
+    "postcss": "^8.5.10",
     "tailwindcss": "^4",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "dompurify": ">=3.4.11",
+    "postcss": "^8.5.10"
   },
   "keywords": [
     "ai-gateway",

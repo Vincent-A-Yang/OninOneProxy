@@ -6,25 +6,99 @@ Emergency backup when everything else is quota-limited. Code 24/7 with zero cost
 
 ## Overview
 
-Free tier providers are your **fallback** when subscription and cheap quota exhausted:
+Free tier providers are your **fallback** when subscription and cheap quota exhausted.
 
-- 🆓 **iFlow** - 8 models FREE (Kimi K2, Qwen3, GLM 4.7, MiniMax M2...)
-- 🆓 **Qwen** - 3 models FREE (Qwen3 Coder Plus/Flash, Vision)
-- 🆓 **Kiro** - 2 models FREE (Claude Sonnet 4.5, Haiku 4.5)
+The gateway registers **5 providers** in the `free` category, split into two groups:
 
-**Strategy:** Use as emergency backup. Unlimited usage, zero cost forever!
+### No-Auth Free (zero setup)
+
+- 🆓 **MiMo Code Free** (`mimo-free`) - 1 model, no login required
+- 🆓 **OpenCode Free** (`opencode`) - dynamic model list, no login required
+
+### OAuth Free (free tier, requires login)
+
+- 🆓 **Gemini CLI** (`gemini-cli`) - 7 models (Gemini 3.x / 2.5 family) — ⚠️ deprecated
+- 🆓 **Kiro AI** (`kiro`) - 24+ models (Claude Opus/Sonnet/Haiku, DeepSeek, Qwen, GLM) — ⚠️ deprecated
+- 🆓 **Qoder** (`qoder`) - 1 model (Qwen 3.7 Max) — ⚠️ deprecated
+
+> **Note:** `iFlow` and `Qwen` are **OAuth providers**, not in the `free` category.
+> They require OAuth authentication and are documented in the [OAuth Providers](./oauth.md) page.
+> Do not confuse them with the no-auth free providers listed here.
+
+**Strategy:** Use no-auth providers as instant backup (zero setup). Use OAuth free
+providers for richer model selection when you can spare a one-time login.
 
 ---
 
-## iFlow (8 FREE Models)
+## MiMo Code Free (No-Auth)
 
 ### Pricing
 
 | Plan | Monthly Cost | Models | Quota |
 |------|--------------|--------|-------|
-| FREE | $0 | 8 models | Unlimited |
+| FREE | $0 | 1 model | Unlimited |
 
-**Best Value:** Most models in free tier! Kimi K2, Qwen3, GLM, MiniMax, DeepSeek.
+### Setup
+
+**Zero setup — no login, no API key.** Just use it:
+
+```
+Model: mmf/mimo-auto
+```
+
+The provider routes to `https://api.xiaomimimo.com/api/free-ai/openai/chat`
+with no authentication headers.
+
+### Available Models
+
+| Model ID | Description | Best For |
+|----------|-------------|----------|
+| `mmf/mimo-auto` | MiMo Auto | General coding |
+
+### Pro Tips
+
+- **No setup** - Works out of the box, zero configuration
+- **Unlimited usage** - No quota limits
+- **Passthrough models** - Supports dynamic model list from models.dev
+
+---
+
+## OpenCode Free (No-Auth)
+
+### Pricing
+
+| Plan | Monthly Cost | Models | Quota |
+|------|--------------|--------|-------|
+| FREE | $0 | Dynamic | Unlimited |
+
+### Setup
+
+**Zero setup — no login, no API key.** Just use it:
+
+```
+Model: oc/<model-name>
+```
+
+The provider routes to `https://opencode.ai` with an `x-opencode-client: desktop`
+header. Models are fetched dynamically from `https://opencode.ai/zen/v1/models`.
+
+### Pro Tips
+
+- **No setup** - Works out of the box
+- **Dynamic models** - Model list updates automatically
+- **Passthrough models** - Supports upstream model names
+
+---
+
+## Gemini CLI (OAuth Free)
+
+### Pricing
+
+| Plan | Monthly Cost | Models | Quota |
+|------|--------------|--------|-------|
+| FREE | $0 | 7 models | Limited (free tier) |
+
+> ⚠️ **Deprecated:** This provider carries a risk notice. Use as fallback only.
 
 ### Setup
 
@@ -32,112 +106,51 @@ Free tier providers are your **fallback** when subscription and cheap quota exha
 
 ```bash
 9router
-# Dashboard → Providers → Connect iFlow
+# Dashboard → Providers → Connect Gemini CLI
 ```
 
-**Step 2: iFlow OAuth Login**
+**Step 2: Google OAuth Login**
 
-- Click "Connect iFlow"
-- Browser opens → iFlow login page
-- Create account or login
-- Grant permissions
+- Click "Connect Gemini CLI"
+- Browser opens → Google login page
+- Grant Cloud Platform + userinfo permissions
 - Auto token refresh enabled
 
 **Step 3: Use in CLI**
 
 ```
-Model: if/kimi-k2-thinking
-       if/kimi-k2
-       if/qwen3-coder-plus
-       if/glm-4.7
-       if/minimax-m2
-       if/deepseek-r1
-       if/deepseek-v3.2-chat
-       if/deepseek-v3.2-reasoner
+Model: gc/gemini-3.1-pro-preview
+       gc/gemini-3-pro-preview
+       gc/gemini-3-flash-preview
+       gc/gemini-3.1-flash-lite-preview
+       gc/gemini-2.5-pro
+       gc/gemini-2.5-flash
+       gc/gemini-2.5-flash-lite
 ```
 
 ### Available Models
 
 | Model ID | Description | Best For |
 |----------|-------------|----------|
-| `if/kimi-k2-thinking` | Kimi K2 Thinking | Complex reasoning |
-| `if/kimi-k2` | Kimi K2 | General coding |
-| `if/qwen3-coder-plus` | Qwen3 Coder Plus | Code generation |
-| `if/glm-4.7` | GLM 4.7 | Chinese + English |
-| `if/minimax-m2` | MiniMax M2 | Long context |
-| `if/deepseek-r1` | DeepSeek R1 | Reasoning tasks |
-| `if/deepseek-v3.2-chat` | DeepSeek V3.2 Chat | Conversational |
-| `if/deepseek-v3.2-reasoner` | DeepSeek V3.2 Reasoner | Complex logic |
-
-### Pro Tips
-
-- **8 models FREE** - Most variety in free tier
-- **Unlimited usage** - No quota limits
-- **Kimi K2 Thinking** - Best for complex reasoning
-- **DeepSeek R1** - Strong reasoning capabilities
+| `gc/gemini-3.1-pro-preview` | Gemini 3.1 Pro Preview | Complex reasoning |
+| `gc/gemini-3-pro-preview` | Gemini 3 Pro Preview | Advanced coding |
+| `gc/gemini-3-flash-preview` | Gemini 3 Flash Preview | Fast responses |
+| `gc/gemini-3.1-flash-lite-preview` | Gemini 3.1 Flash Lite Preview | Lightweight tasks |
+| `gc/gemini-2.5-pro` | Gemini 2.5 Pro | General purpose |
+| `gc/gemini-2.5-flash` | Gemini 2.5 Flash | Quick responses |
+| `gc/gemini-2.5-flash-lite` | Gemini 2.5 Flash Lite | Minimal overhead |
 
 ---
 
-## Qwen (3 FREE Models)
+## Kiro AI (OAuth Free)
 
 ### Pricing
 
 | Plan | Monthly Cost | Models | Quota |
 |------|--------------|--------|-------|
-| FREE | $0 | 3 models | Unlimited |
+| FREE | $0 | 24+ models | Limited (free tier) |
 
-### Setup
-
-**Step 1: Connect via Dashboard**
-
-```bash
-9router
-# Dashboard → Providers → Connect Qwen
-```
-
-**Step 2: Device Code Authorization**
-
-- Click "Connect Qwen"
-- Dashboard shows device code
-- Visit authorization URL
-- Enter device code
-- Login to Qwen account
-- Auto token refresh enabled
-
-**Step 3: Use in CLI**
-
-```
-Model: qw/qwen3-coder-plus
-       qw/qwen3-coder-flash
-       qw/vision-model
-```
-
-### Available Models
-
-| Model ID | Description | Best For |
-|----------|-------------|----------|
-| `qw/qwen3-coder-plus` | Qwen3 Coder Plus | Advanced coding |
-| `qw/qwen3-coder-flash` | Qwen3 Coder Flash | Fast responses |
-| `qw/vision-model` | Qwen3 Vision | Image analysis |
-
-### Pro Tips
-
-- **Qwen3 Coder Plus** - Strong coding capabilities
-- **Qwen3 Coder Flash** - Fast for quick tasks
-- **Vision model** - FREE image analysis
-- **Unlimited usage** - No quota limits
-
----
-
-## Kiro (Claude FREE)
-
-### Pricing
-
-| Plan | Monthly Cost | Models | Quota |
-|------|--------------|--------|-------|
-| FREE | $0 | Claude Sonnet 4.5, Haiku 4.5 | Unlimited |
-
-**Best Value:** FREE Claude! Same quality as paid Claude Code.
+> ⚠️ **Deprecated:** This provider carries a risk notice. Use as fallback only.
 
 ### Setup
 
@@ -155,41 +168,90 @@ Model: qw/qwen3-coder-plus
   - AWS Builder ID (recommended)
   - Google account
   - GitHub account
+  - Import token
 - Grant permissions
 - Auto token refresh enabled
 
 **Step 3: Use in CLI**
 
 ```
-Model: kr/claude-sonnet-4.5
+Model: kr/claude-opus-4.8
+       kr/claude-sonnet-5
        kr/claude-haiku-4.5
+       kr/deepseek-3.2
+       kr/qwen3-coder-next
+       kr/glm-5
+       kr/MiniMax-M2.5
 ```
 
 ### Available Models
 
 | Model ID | Description | Best For |
 |----------|-------------|----------|
-| `kr/claude-sonnet-4.5` | Claude Sonnet 4.5 | Balanced quality/speed |
+| `kr/claude-opus-4.8` | Claude Opus 4.8 | Complex reasoning |
+| `kr/claude-sonnet-5` | Claude Sonnet 5 | Balanced quality/speed |
 | `kr/claude-haiku-4.5` | Claude Haiku 4.5 | Fast responses |
+| `kr/deepseek-3.2` | DeepSeek 3.2 | Coding tasks |
+| `kr/qwen3-coder-next` | Qwen3 Coder Next | Code generation |
+| `kr/glm-5` | GLM 5 | Chinese + English |
+| `kr/MiniMax-M2.5` | MiniMax M2.5 | Long context |
 
-### Pro Tips
+Thinking and agentic variants are also available (e.g., `kr/claude-opus-4.8-thinking`).
 
-- **FREE Claude** - Same quality as paid tier
-- **AWS Builder ID** - Easy setup with AWS account
-- **Unlimited usage** - No quota limits
-- **Best quality** - Claude 4.5 for free!
+---
+
+## Qoder (OAuth Free)
+
+### Pricing
+
+| Plan | Monthly Cost | Models | Quota |
+|------|--------------|--------|-------|
+| FREE | $0 | 1 model | Limited (free tier) |
+
+> ⚠️ **Deprecated:** This provider carries a risk notice. Use as fallback only.
+
+### Setup
+
+**Step 1: Connect via Dashboard**
+
+```bash
+9router
+# Dashboard → Providers → Connect Qoder
+```
+
+**Step 2: Device Token Login**
+
+- Click "Connect Qoder"
+- Dashboard shows device code
+- Visit `https://qoder.com/device/selectAccounts`
+- Enter device code
+- Auto token refresh enabled
+
+**Step 3: Use in CLI**
+
+```
+Model: qd/qmodel_latest
+```
+
+### Available Models
+
+| Model ID | Description | Best For |
+|----------|-------------|----------|
+| `qd/qmodel_latest` | Qoder Qwen 3.7 Max | General coding |
 
 ---
 
 ## Feature Comparison
 
-| Provider | Models | Best Model | Setup | Quota |
-|----------|--------|------------|-------|-------|
-| **iFlow** | 8 | Kimi K2 Thinking | OAuth | Unlimited |
-| **Qwen** | 3 | Qwen3 Coder Plus | Device Code | Unlimited |
-| **Kiro** | 2 | Claude Sonnet 4.5 | AWS Builder ID | Unlimited |
+| Provider | Auth | Models | Best Model | Setup | Status |
+|----------|------|--------|------------|-------|--------|
+| **MiMo Code Free** | No-Auth | 1 | MiMo Auto | Zero | Active |
+| **OpenCode Free** | No-Auth | Dynamic | Dynamic | Zero | Active |
+| **Gemini CLI** | OAuth (Google) | 7 | Gemini 3.1 Pro | One-time login | ⚠️ Deprecated |
+| **Kiro AI** | OAuth (AWS) | 24+ | Claude Opus 4.8 | One-time login | ⚠️ Deprecated |
+| **Qoder** | OAuth (Device) | 1 | Qwen 3.7 Max | One-time login | ⚠️ Deprecated |
 
-**Winner:** iFlow for variety, Kiro for quality!
+**Winner:** Kiro for quality (free Claude!), MiMo/OpenCode for zero-setup convenience.
 
 ---
 
@@ -201,53 +263,25 @@ Model: kr/claude-sonnet-4.5
 Settings → Models → Advanced:
   OpenAI API Base URL: http://localhost:20128/v1
   OpenAI API Key: [from 9router dashboard]
-  Model: if/kimi-k2-thinking
+  Model: mmf/mimo-auto
 ```
 
-### Create Combo (Recommended)
+### Create Free Combo (Recommended)
 
 ```
 Dashboard → Combos → Create New
 
 Name: free-combo
 Models:
-  1. if/kimi-k2-thinking (iFlow primary)
-  2. qw/qwen3-coder-plus (Qwen backup)
-  3. kr/claude-sonnet-4.5 (Kiro quality)
+  1. mmf/mimo-auto (no-auth primary)
+  2. oc/<model> (no-auth backup)
+  3. kr/claude-sonnet-5 (OAuth quality)
+  4. gc/gemini-3-flash-preview (OAuth speed)
 
 Use in CLI: free-combo
 ```
 
 **Result:** Zero cost, maximum uptime!
-
----
-
-## Full Fallback Strategy
-
-### Complete 3-Tier Combo
-
-```
-Dashboard → Combos → Create New
-
-Name: complete-fallback
-Models:
-  1. gc/gemini-3-flash-preview (FREE subscription)
-  2. cc/claude-opus-4-5 (Paid subscription)
-  3. glm/glm-4.7 (Cheap backup, $0.6/1M)
-  4. minimax/MiniMax-M2.1 (Cheapest, $0.2/1M)
-  5. if/kimi-k2-thinking (FREE fallback)
-  6. kr/claude-sonnet-4.5 (FREE quality)
-
-Use in CLI: complete-fallback
-```
-
-**Result:**
-- Tier 1: FREE subscription (Gemini CLI)
-- Tier 2: Paid subscription (Claude Code)
-- Tier 3: Cheap backup (GLM, MiniMax)
-- Tier 4: FREE fallback (iFlow, Kiro)
-
-**Never stop coding!**
 
 ---
 
@@ -259,144 +293,38 @@ Use in CLI: complete-fallback
 Priority:
 1. Subscription tier (maximize paid quota)
 2. Cheap tier (pennies per 1M tokens)
-3. FREE tier (unlimited, zero cost)
-
-Only use free tier when:
-- Subscription quota exhausted
-- Budget limit reached
-- Testing/non-critical tasks
+3. No-auth free (instant, zero setup)
+4. OAuth free (richer models, one-time login)
 ```
 
-### 2. Choose Right Model
+### 2. Choose the Right Free Provider
 
 ```
-Complex reasoning: if/kimi-k2-thinking
-Fast coding: qw/qwen3-coder-flash
-Best quality: kr/claude-sonnet-4.5
-Long context: if/minimax-m2
-Vision tasks: qw/vision-model
+Zero setup needed:    mmf/mimo-auto or oc/<model>
+Best quality:         kr/claude-opus-4.8 or kr/claude-sonnet-5
+Fast responses:       gc/gemini-3-flash-preview
+Simple tasks:         mmf/mimo-auto
 ```
 
-### 3. Create Free-Only Combo
+### 3. Mix No-Auth and OAuth Free
 
 ```
-For zero-cost coding:
+For zero-cost coding with maximum reliability:
 
 Name: zero-cost
 Models:
-  1. kr/claude-sonnet-4.5 (Best quality)
-  2. if/kimi-k2-thinking (Complex tasks)
-  3. qw/qwen3-coder-plus (Fast coding)
+  1. mmf/mimo-auto (no-auth, always available)
+  2. oc/<model> (no-auth backup)
+  3. kr/claude-sonnet-5 (OAuth quality)
 
 Cost: $0 forever!
-```
-
-### 4. Test Before Production
-
-```
-Use free tier to:
-- Test prompts
-- Prototype features
-- Learn new frameworks
-- Non-critical tasks
-
-Save paid quota for:
-- Production code
-- Complex refactoring
-- Critical features
-```
-
----
-
-## Real-World Examples
-
-### Example 1: Student/Learner (Zero Budget)
-
-```
-Setup:
-1. kr/claude-sonnet-4.5 (Best quality)
-2. if/kimi-k2-thinking (Complex reasoning)
-3. qw/qwen3-coder-plus (Fast coding)
-
-Monthly cost: $0
-Usage: Unlimited
-
-Perfect for:
-- Learning to code
-- Personal projects
-- Homework/assignments
-```
-
-### Example 2: Freelancer (Budget-Conscious)
-
-```
-Setup:
-1. gc/gemini-3-flash-preview (FREE 180K/month)
-2. glm/glm-4.7 (Cheap backup, $0.6/1M)
-3. if/kimi-k2-thinking (FREE fallback)
-
-Monthly cost: $5-10
-Usage: 100M+ tokens
-
-Perfect for:
-- Client projects (paid tier)
-- Testing (free tier)
-- Emergency backup
-```
-
-### Example 3: Heavy User (Maximize Everything)
-
-```
-Setup:
-1. gc/gemini-3-flash-preview (FREE 180K/month)
-2. cc/claude-opus-4-5 (Subscription $20-100)
-3. cx/gpt-5.2-codex (Subscription $20-200)
-4. glm/glm-4.7 (Cheap $0.6/1M)
-5. minimax/MiniMax-M2.1 (Cheapest $0.2/1M)
-6. if/kimi-k2-thinking (FREE unlimited)
-7. kr/claude-sonnet-4.5 (FREE quality)
-
-Monthly cost: $40-320 (subscriptions) + $10-20 (cheap tier)
-Usage: 500M+ tokens
-
-Perfect for:
-- Professional development
-- Team projects
-- 24/7 coding
-```
-
----
-
-## Cost Comparison
-
-### Scenario: 100M tokens/month
-
-**Option 1: ChatGPT API Only**
-```
-100M × $20/1M = $2,000/month
-```
-
-**Option 2: 9Router Free Tier Only**
-```
-100M via free tier = $0/month
-Savings: $2,000/month (100%)
-```
-
-**Option 3: 9Router Complete Strategy**
-```
-60M via Gemini CLI (FREE): $0
-30M via Claude Code (subscription): $0 extra
-8M via GLM (cheap): $4.80
-2M via iFlow (FREE): $0
-Total: $4.80/month + subscriptions you already have
-Savings: $1,995/month (99.76%)
 ```
 
 ---
 
 ## Troubleshooting
 
-### "OAuth failed"
+### "OAuth failed" (Gemini CLI / Kiro / Qoder)
 
 **Solution:**
 - Check internet connection
@@ -427,16 +355,17 @@ Savings: $1,995/month (99.76%)
 
 - **Speed** - May be slower than paid tiers
 - **Priority** - Lower priority during peak hours
-- **Rate limits** - Possible rate limiting (but unlimited quota)
+- **Rate limits** - Possible rate limiting (OAuth free tiers)
 - **Availability** - May have occasional downtime
+- **Deprecation** - Gemini CLI, Kiro, and Qoder carry risk notices
 
-**Solution:** Use 3-tier fallback strategy for reliability!
+**Solution:** Use multi-provider fallback strategy for reliability!
 
 ---
 
 ## Next Steps
 
-- **Setup subscriptions:** [Subscription Providers](./subscription.md)
+- **Setup OAuth providers:** [OAuth Providers](./oauth.md) (includes iFlow, Qwen)
 - **Add cheap backup:** [Cheap Providers](./cheap.md)
 - **Create combos:** Dashboard → Combos → Create New
-- **Start coding:** Use `complete-fallback` combo for maximum reliability
+- **Start coding:** Use `free-combo` combo for maximum reliability

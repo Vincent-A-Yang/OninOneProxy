@@ -846,6 +846,24 @@ export async function cleanupOldData(retentionDays = 30) {
     console.error("[usageRepo] cleanupOldData (cache) failed:", e?.message || String(e));
   }
 
+  // P1 fix: age-based cleanup for responseCache entries without expiresAt.
+  // deleteExpiredCache() above only removes entries whose explicit TTL
+  // (expiresAt) has lapsed. Entries with no expiresAt (NULL or '') would
+  // accumulate forever. This sweep uses the same cutoff as usageHistory so
+  // the cache cannot grow unbounded from entries with no TTL set.
+  // Fail-open: errors return 0, do not throw.
+  let cacheAgedDeleted = 0;
+  try {
+    const db = await getAdapter();
+    const cRes = db.run(
+      `DELETE FROM responseCache WHERE createdAt < ?`,
+      [cutoffIso]
+    );
+    cacheAgedDeleted = cRes?.changes || 0;
+  } catch (e) {
+    console.error("[usageRepo] cleanupOldData (aged cache) failed:", e?.message || String(e));
+  }
+
   // P1-1: prune corrupt SQLite backup files. When the DB driver detects a
   // corrupt data.sqlite it renames the file to data.sqlite.corrupt-YYYYMMDD
   // before recreating a fresh DB. Over time these backups accumulate and
@@ -874,7 +892,7 @@ export async function cleanupOldData(retentionDays = 30) {
     corruptFilesDeleted = 0;
   }
 
-  const result = { historyDeleted, dailyDeleted, cutoffIso, cutoffDateKey, cacheDeleted, corruptFilesDeleted };
+  const result = { historyDeleted, dailyDeleted, cutoffIso, cutoffDateKey, cacheDeleted, cacheAgedDeleted, corruptFilesDeleted };
   if (transactionError) result.error = transactionError;
   return result;
 }

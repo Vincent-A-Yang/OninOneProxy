@@ -9,6 +9,7 @@ import { cn } from "@/shared/utils/cn";
 import { APP_CONFIG } from "@/shared/constants/config";
 import { LOCALE_COOKIE, normalizeLocale } from "@/i18n/config";
 import { LOCALE_FLAGS } from "@/shared/constants/locales";
+import { translate } from "@/i18n/runtime";
 
 function getLocaleFromCookie() {
   if (typeof document === "undefined") return "en";
@@ -132,12 +133,12 @@ export default function ProfilePage() {
       const data = await res.json();
       if (res.ok) {
         setSettings((prev) => ({ ...prev, ...data }));
-        setProxyStatus({ type: "success", message: "Proxy settings applied" });
+        setProxyStatus({ type: "success", message: translate("Proxy settings applied") });
       } else {
-        setProxyStatus({ type: "error", message: data.error || "Failed to update proxy settings" });
+        setProxyStatus({ type: "error", message: data.error || translate("Failed to update proxy settings") });
       }
     } catch (err) {
-      setProxyStatus({ type: "error", message: "An error occurred" });
+      setProxyStatus({ type: "error", message: translate("An error occurred") });
     } finally {
       setProxyLoading(false);
     }
@@ -148,7 +149,7 @@ export default function ProfilePage() {
 
     const proxyUrl = (proxyForm.outboundProxyUrl || "").trim();
     if (!proxyUrl) {
-      setProxyStatus({ type: "error", message: "Please enter a Proxy URL to test" });
+      setProxyStatus({ type: "error", message: translate("Please enter a Proxy URL to test") });
       return;
     }
 
@@ -166,16 +167,16 @@ export default function ProfilePage() {
       if (res.ok && data?.ok) {
         setProxyStatus({
           type: "success",
-          message: `Proxy test OK (${data.status}) in ${data.elapsedMs}ms`,
+          message: translate("profile.proxyTestOk", { status: data.status, elapsedMs: data.elapsedMs }),
         });
       } else {
         setProxyStatus({
           type: "error",
-          message: data?.error || "Proxy test failed",
+          message: data?.error || translate("Proxy test failed"),
         });
       }
     } catch (err) {
-      setProxyStatus({ type: "error", message: "An error occurred" });
+      setProxyStatus({ type: "error", message: translate("An error occurred") });
     } finally {
       setProxyTestLoading(false);
     }
@@ -198,13 +199,13 @@ export default function ProfilePage() {
         setProxyForm((prev) => ({ ...prev, outboundProxyEnabled: data?.outboundProxyEnabled === true }));
         setProxyStatus({
           type: "success",
-          message: outboundProxyEnabled ? "Proxy enabled" : "Proxy disabled",
+          message: outboundProxyEnabled ? translate("Proxy enabled") : translate("Proxy disabled"),
         });
       } else {
-        setProxyStatus({ type: "error", message: data.error || "Failed to update proxy settings" });
+        setProxyStatus({ type: "error", message: data.error || translate("Failed to update proxy settings") });
       }
     } catch (err) {
-      setProxyStatus({ type: "error", message: "An error occurred" });
+      setProxyStatus({ type: "error", message: translate("An error occurred") });
     } finally {
       setProxyLoading(false);
     }
@@ -213,7 +214,7 @@ export default function ProfilePage() {
   const handlePasswordChange = async (e) => {
     e.preventDefault();
     if (passwords.new !== passwords.confirm) {
-      setPassStatus({ type: "error", message: "Passwords do not match" });
+      setPassStatus({ type: "error", message: translate("Passwords do not match") });
       return;
     }
 
@@ -233,13 +234,13 @@ export default function ProfilePage() {
       const data = await res.json();
 
       if (res.ok) {
-        setPassStatus({ type: "success", message: "Password updated successfully" });
+        setPassStatus({ type: "success", message: translate("Password updated successfully") });
         setPasswords({ current: "", new: "", confirm: "" });
       } else {
-        setPassStatus({ type: "error", message: data.error || "Failed to update password" });
+        setPassStatus({ type: "error", message: data.error || translate("Failed to update password") });
       }
     } catch (err) {
-      setPassStatus({ type: "error", message: "An error occurred" });
+      setPassStatus({ type: "error", message: translate("An error occurred") });
     } finally {
       setPassLoading(false);
     }
@@ -293,6 +294,36 @@ export default function ProfilePage() {
       }
     } catch (err) {
       console.error("Failed to update fusion failover setting:", err);
+    }
+  };
+
+  const updateQuotaPoolEnabled = async (enabled) => {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quotaPoolEnabled: enabled }),
+      });
+      if (res.ok) {
+        setSettings(prev => ({ ...prev, quotaPoolEnabled: enabled }));
+      }
+    } catch (err) {
+      console.error("Failed to update quota pool setting:", err);
+    }
+  };
+
+  const updateProviderLimitsEnabled = async (enabled) => {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerLimitsEnabled: enabled }),
+      });
+      if (res.ok) {
+        setSettings(prev => ({ ...prev, providerLimitsEnabled: enabled }));
+      }
+    } catch (err) {
+      console.error("Failed to update provider limits setting:", err);
     }
   };
 
@@ -359,7 +390,7 @@ export default function ProfilePage() {
     const secret = oidcClientSecret.trim();
 
     if (authMode !== "password" && (!issuerUrl || !clientId || !secret) && !settings.oidcConfigured) {
-      setOidcStatus({ type: "error", message: "Issuer URL, client ID, and client secret are required to enable OIDC." });
+      setOidcStatus({ type: "error", message: translate("Issuer URL, client ID, and client secret are required to enable OIDC.") });
       return;
     }
 
@@ -400,16 +431,16 @@ export default function ProfilePage() {
           type: "success",
           message:
             authMode === "oidc"
-              ? "OIDC login enabled"
+              ? translate("OIDC login enabled")
               : authMode === "both"
-                ? "Password and OIDC login enabled"
-                : "OIDC settings saved",
+                ? translate("Password and OIDC login enabled")
+                : translate("OIDC settings saved"),
         });
       } else {
-        setOidcStatus({ type: "error", message: data.error || "Failed to save OIDC settings" });
+        setOidcStatus({ type: "error", message: data.error || translate("Failed to save OIDC settings") });
       }
     } catch (err) {
-      setOidcStatus({ type: "error", message: "An error occurred" });
+      setOidcStatus({ type: "error", message: translate("An error occurred") });
     } finally {
       setOidcLoading(false);
     }
@@ -422,7 +453,7 @@ export default function ProfilePage() {
     const secret = oidcClientSecret.trim();
 
     if (!issuerUrl || !clientId) {
-      setOidcTestStatus({ type: "error", message: "Issuer URL and client ID are required to test the connection." });
+      setOidcTestStatus({ type: "error", message: translate("Issuer URL and client ID are required to test the connection.") });
       return;
     }
 
@@ -448,7 +479,7 @@ export default function ProfilePage() {
       if (!saveRes.ok) {
         setOidcTestStatus({
           type: "error",
-          message: saved.error || "Failed to save OIDC settings before testing",
+          message: saved.error || translate("Failed to save OIDC settings before testing"),
         });
         return;
       }
@@ -467,18 +498,18 @@ export default function ProfilePage() {
       if (res.ok && data?.ok) {
         const statusMessage = data.clientSecretTested
           ? data.clientSecretValid === true
-            ? `Connection OK. Discovery loaded from ${data.issuerUrl}. Client secret validated too.`
-            : `Connection OK. Discovery loaded from ${data.issuerUrl}. Client secret was not checked.`
-          : `Connection OK. Discovery loaded from ${data.issuerUrl}.`;
+            ? translate("profile.oidcConnectionOkSecretValid", { issuerUrl: data.issuerUrl })
+            : translate("profile.oidcConnectionOkSecretUnchecked", { issuerUrl: data.issuerUrl })
+          : translate("profile.oidcConnectionOk", { issuerUrl: data.issuerUrl });
         setOidcTestStatus({
           type: "success",
           message: statusMessage,
         });
       } else {
-        setOidcTestStatus({ type: "error", message: data.error || "OIDC connection test failed" });
+        setOidcTestStatus({ type: "error", message: data.error || translate("OIDC connection test failed") });
       }
     } catch (err) {
-      setOidcTestStatus({ type: "error", message: "An error occurred" });
+      setOidcTestStatus({ type: "error", message: translate("An error occurred") });
     } finally {
       setOidcTestLoading(false);
     }
@@ -552,7 +583,7 @@ export default function ProfilePage() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to export database");
+        throw new Error(data.error || translate("Failed to export database"));
       }
 
       const payload = await res.json();
@@ -562,15 +593,15 @@ export default function ProfilePage() {
       const anchor = document.createElement("a");
       const stamp = new Date().toISOString().replace(/[.:]/g, "-");
       anchor.href = url;
-      anchor.download = `9router-backup-${stamp}.json`;
+      anchor.download = `oninoneproxy-backup-${stamp}.json`;
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
       URL.revokeObjectURL(url);
 
-      setDbStatus({ type: "success", message: "Database backup downloaded" });
+      setDbStatus({ type: "success", message: translate("Database backup downloaded") });
     } catch (err) {
-      setDbStatus({ type: "error", message: err.message || "Failed to export database" });
+      setDbStatus({ type: "error", message: err.message || translate("Failed to export database") });
     } finally {
       setDbLoading(false);
     }
@@ -601,13 +632,13 @@ export default function ProfilePage() {
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error || "Failed to import database");
+        throw new Error(data.error || translate("Failed to import database"));
       }
 
       await reloadSettings();
-      setDbStatus({ type: "success", message: "Database imported successfully" });
+      setDbStatus({ type: "success", message: translate("Database imported successfully") });
     } catch (err) {
-      setDbStatus({ type: "error", message: err.message || "Invalid backup file" });
+      setDbStatus({ type: "error", message: err.message || translate("Invalid backup file") });
     } finally {
       pendingImportRef.current = null;
       setDbLoading(false);
@@ -657,8 +688,8 @@ export default function ProfilePage() {
                 <span className="material-symbols-outlined text-xl sm:text-2xl">computer</span>
               </div>
               <div>
-                <h2 className="text-lg sm:text-xl font-semibold">Local Mode</h2>
-                <p className="text-sm text-text-muted">Running on your machine</p>
+                <h2 className="text-lg sm:text-xl font-semibold">{translate("Local Mode")}</h2>
+                <p className="text-sm text-text-muted">{translate("Running on your machine")}</p>
               </div>
             </div>
             <div className="inline-flex p-1 rounded-lg bg-black/5 dark:bg-white/5 w-full sm:w-auto">
@@ -677,7 +708,7 @@ export default function ProfilePage() {
                   <span className="material-symbols-outlined text-[18px]">
                     {option === "light" ? "light_mode" : option === "dark" ? "dark_mode" : "contrast"}
                   </span>
-                  <span className="capitalize text-xs sm:text-sm">{option}</span>
+                  <span className="capitalize text-xs sm:text-sm">{translate(option)}</span>
                 </button>
               ))}
             </div>
@@ -685,8 +716,8 @@ export default function ProfilePage() {
           <div className="flex flex-col gap-3 pt-4 border-t border-border">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 rounded-lg bg-bg border border-border gap-2">
               <div>
-                <p className="font-medium text-sm sm:text-base">Database Location</p>
-                <p className="text-xs sm:text-sm text-text-muted font-mono break-all">~/.9router/db/data.sqlite</p>
+                <p className="font-medium text-sm sm:text-base">{translate("Database Location")}</p>
+                <p className="text-xs sm:text-sm text-text-muted font-mono break-all">~/.oninoneproxy/db/data.sqlite</p>
               </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
@@ -706,7 +737,7 @@ export default function ProfilePage() {
                 disabled={dbLoading}
                 className="w-full sm:w-auto"
               >
-                Import Backup
+                {translate("Import Backup")}
               </Button>
               <input
                 ref={importFileRef}
@@ -730,14 +761,14 @@ export default function ProfilePage() {
             <div className="size-10 rounded-lg bg-blue-500/10 text-blue-500 flex items-center justify-center shrink-0">
               <span className="material-symbols-outlined text-[20px]">language</span>
             </div>
-            <h3 className="text-base sm:text-lg font-semibold">Language</h3>
+            <h3 className="text-base sm:text-lg font-semibold">{translate("Language")}</h3>
           </div>
           <button
             onClick={() => setLangOpen(true)}
             className="flex items-center justify-between w-full p-3 rounded-lg bg-bg border border-border hover:border-primary/50 transition-colors"
             data-i18n-skip="true"
           >
-            <span className="text-sm text-text-muted">Display language</span>
+            <span className="text-sm text-text-muted">{translate("Display language")}</span>
             <span className="text-2xl">{LOCALE_FLAGS[locale] || "🌐"}</span>
           </button>
         </Card>
@@ -748,14 +779,14 @@ export default function ProfilePage() {
             <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0">
               <span className="material-symbols-outlined text-[20px]">shield</span>
             </div>
-            <h3 className="text-base sm:text-lg font-semibold">Security</h3>
+            <h3 className="text-base sm:text-lg font-semibold">{translate("Security")}</h3>
           </div>
           <div className="flex flex-col gap-4">
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm sm:text-base">Require login</p>
+                <p className="font-medium text-sm sm:text-base">{translate("Require login")}</p>
                 <p className="text-xs sm:text-sm text-text-muted">
-                  When ON, dashboard requires password. When OFF, access without login.
+                  {translate("When ON, dashboard requires password. When OFF, access without login.")}
                 </p>
               </div>
               <Toggle
@@ -768,10 +799,10 @@ export default function ProfilePage() {
               <form onSubmit={handlePasswordChange} className="flex flex-col gap-4 pt-4 border-t border-border/50">
                 {settings.hasPassword && (
                   <div className="flex flex-col gap-2">
-                    <label className="text-xs sm:text-sm font-medium">Current Password</label>
+                    <label className="text-xs sm:text-sm font-medium">{translate("Current Password")}</label>
                     <Input
                       type="password"
-                      placeholder="Enter current password"
+                      placeholder={translate("Enter current password")}
                       value={passwords.current}
                       onChange={(e) => setPasswords({ ...passwords, current: e.target.value })}
                       required
@@ -787,20 +818,20 @@ export default function ProfilePage() {
                 )} */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="flex flex-col gap-2">
-                    <label className="text-xs sm:text-sm font-medium">New Password</label>
+                    <label className="text-xs sm:text-sm font-medium">{translate("New Password")}</label>
                     <Input
                       type="password"
-                      placeholder="Enter new password"
+                      placeholder={translate("Enter new password")}
                       value={passwords.new}
                       onChange={(e) => setPasswords({ ...passwords, new: e.target.value })}
                       required
                     />
                   </div>
                   <div className="flex flex-col gap-2">
-                    <label className="text-xs sm:text-sm font-medium">Confirm New Password</label>
+                    <label className="text-xs sm:text-sm font-medium">{translate("Confirm New Password")}</label>
                     <Input
                       type="password"
-                      placeholder="Confirm new password"
+                      placeholder={translate("Confirm new password")}
                       value={passwords.confirm}
                       onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
                       required
@@ -816,7 +847,7 @@ export default function ProfilePage() {
 
                 <div className="pt-2">
                   <Button type="submit" variant="primary" loading={passLoading} className="w-full sm:w-auto">
-                    {settings.hasPassword ? "Update Password" : "Set Password"}
+                    {settings.hasPassword ? translate("Update Password") : translate("Set Password")}
                   </Button>
                 </div>
               </form>
@@ -835,9 +866,9 @@ export default function ProfilePage() {
               <span className="material-symbols-outlined text-[20px]">lock_open</span>
             </div>
             <div className="flex-1 min-w-0">
-              <h3 className="text-base sm:text-lg font-semibold">OIDC Dashboard Login</h3>
+              <h3 className="text-base sm:text-lg font-semibold">{translate("OIDC Dashboard Login")}</h3>
               <p className="text-xs text-text-muted">
-                {settings.authMode === "oidc" ? "OIDC active" : settings.authMode === "both" ? "Password + OIDC active" : "Optional SSO via Authentik/Keycloak/Google"}
+                {settings.authMode === "oidc" ? translate("OIDC active") : settings.authMode === "both" ? translate("Password + OIDC active") : translate("Optional SSO via Authentik/Keycloak/Google")}
               </p>
             </div>
             <span className="material-symbols-outlined text-text-muted shrink-0">
@@ -847,27 +878,27 @@ export default function ProfilePage() {
           {oidcExpanded && (
           <div className="flex flex-col gap-4 mt-4">
             <p className="text-xs sm:text-sm text-text-muted">
-              Use Authentik or any OIDC provider to sign in to the dashboard. You can enable password-only, OIDC-only, or both for the dashboard; model API access still uses API keys.
+              {translate("Use Authentik or any OIDC provider to sign in to the dashboard. You can enable password-only, OIDC-only, or both for the dashboard; model API access still uses API keys.")}
             </p>
 
             <div className="flex flex-col gap-2">
-              <label className="font-medium text-sm sm:text-base">Auth Mode</label>
+              <label className="font-medium text-sm sm:text-base">{translate("Auth Mode")}</label>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 {[
                   {
                     value: "password",
-                    title: "Password only",
-                    desc: "Keep the legacy password login.",
+                    title: translate("Password only"),
+                    desc: translate("Keep the legacy password login."),
                   },
                   {
                     value: "oidc",
-                    title: "OIDC only",
-                    desc: "Require OIDC for dashboard access.",
+                    title: translate("OIDC only"),
+                    desc: translate("Require OIDC for dashboard access."),
                   },
                   {
                     value: "both",
-                    title: "Both",
-                    desc: "Allow either password or OIDC.",
+                    title: translate("Both"),
+                    desc: translate("Allow either password or OIDC."),
                   },
                 ].map((option) => {
                   const active = oidcForm.authMode === option.value;
@@ -894,9 +925,9 @@ export default function ProfilePage() {
 
             <div className="grid grid-cols-1 gap-4">
               <div className="flex flex-col gap-2">
-                <label className="font-medium text-sm sm:text-base">Issuer URL</label>
+                <label className="font-medium text-sm sm:text-base">{translate("Issuer URL")}</label>
                 <Input
-                  placeholder="https://auth.example.com/application/o/9router/"
+                  placeholder="https://auth.example.com/application/o/oninoneproxy/"
                   value={oidcForm.oidcIssuerUrl}
                   onChange={(e) => updateOidcForm("oidcIssuerUrl", e.target.value)}
                   disabled={loading || oidcLoading}
@@ -904,9 +935,9 @@ export default function ProfilePage() {
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="font-medium text-sm sm:text-base">Client ID</label>
+                <label className="font-medium text-sm sm:text-base">{translate("Client ID")}</label>
                 <Input
-                  placeholder="9router-dashboard"
+                  placeholder="oninoneproxy-dashboard"
                   value={oidcForm.oidcClientId}
                   onChange={(e) => updateOidcForm("oidcClientId", e.target.value)}
                   disabled={loading || oidcLoading}
@@ -914,19 +945,19 @@ export default function ProfilePage() {
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="font-medium text-sm sm:text-base">Client Secret</label>
+                <label className="font-medium text-sm sm:text-base">{translate("Client Secret")}</label>
                 <Input
                   type="password"
-                  placeholder="Leave blank to keep existing secret"
+                  placeholder={translate("Leave blank to keep existing secret")}
                   value={oidcClientSecret}
                   onChange={(e) => setOidcClientSecret(e.target.value)}
                   disabled={loading || oidcLoading}
                 />
-                <p className="text-xs sm:text-sm text-text-muted">This value is write-only after saving.</p>
+                <p className="text-xs sm:text-sm text-text-muted">{translate("This value is write-only after saving.")}</p>
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="font-medium text-sm sm:text-base">Scopes</label>
+                <label className="font-medium text-sm sm:text-base">{translate("Scopes")}</label>
                 <Input
                   placeholder="openid profile email"
                   value={oidcForm.oidcScopes}
@@ -936,7 +967,7 @@ export default function ProfilePage() {
               </div>
 
               <div className="flex flex-col gap-2">
-                <label className="font-medium text-sm sm:text-base">Login Button Label</label>
+                <label className="font-medium text-sm sm:text-base">{translate("Login Button Label")}</label>
                 <Input
                   placeholder="Sign in with OIDC"
                   value={oidcForm.oidcLoginLabel}
@@ -947,16 +978,16 @@ export default function ProfilePage() {
             </div>
 
             <div className="rounded-lg border border-border bg-bg p-3 text-xs sm:text-sm text-text-muted">
-              <p className="font-medium text-text-main mb-1">Redirect URI</p>
+              <p className="font-medium text-text-main mb-1">{translate("Redirect URI")}</p>
               <code className="block break-all font-mono">{oidcRedirectUri}</code>
             </div>
 
             <div className="flex flex-col sm:flex-row gap-2 pt-2 border-t border-border/50">
               <Button type="button" variant="primary" loading={oidcLoading} onClick={() => saveOidcSettings()} className="w-full sm:w-auto">
-                Save auth mode
+                {translate("Save auth mode")}
               </Button>
               <Button type="button" variant="outline" loading={oidcTestLoading} onClick={testOidcConnection} className="w-full sm:w-auto">
-                Test connection
+                {translate("Test connection")}
               </Button>
             </div>
 
@@ -974,13 +1005,13 @@ export default function ProfilePage() {
 
             {settings.authMode === "oidc" && (
               <p className="text-xs sm:text-sm text-amber-600 dark:text-amber-400">
-                OIDC login is currently active. Password login is disabled until you switch back.
+                {translate("OIDC login is currently active. Password login is disabled until you switch back.")}
               </p>
             )}
 
             {settings.authMode === "both" && (
               <p className="text-xs sm:text-sm text-amber-600 dark:text-amber-400">
-                Password and OIDC login are both active.
+                {translate("Password and OIDC login are both active.")}
               </p>
             )}
           </div>
@@ -993,14 +1024,14 @@ export default function ProfilePage() {
             <div className="p-2 rounded-lg bg-blue-500/10 text-blue-500 shrink-0">
               <span className="material-symbols-outlined text-[20px]">route</span>
             </div>
-            <h3 className="text-base sm:text-lg font-semibold">Routing Strategy</h3>
+            <h3 className="text-base sm:text-lg font-semibold">{translate("Routing Strategy")}</h3>
           </div>
           <div className="flex flex-col gap-4">
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm sm:text-base">Round Robin</p>
+                <p className="font-medium text-sm sm:text-base">{translate("Round Robin")}</p>
                 <p className="text-xs sm:text-sm text-text-muted">
-                  Cycle through accounts to distribute load
+                  {translate("Cycle through accounts to distribute load")}
                 </p>
               </div>
               <Toggle
@@ -1014,9 +1045,9 @@ export default function ProfilePage() {
             {settings.fallbackStrategy === "round-robin" && (
               <div className="flex items-start sm:items-center justify-between gap-4 pt-2 border-t border-border/50">
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm sm:text-base">Sticky Limit</p>
+                  <p className="font-medium text-sm sm:text-base">{translate("Sticky Limit")}</p>
                   <p className="text-xs sm:text-sm text-text-muted">
-                    Calls per account before switching
+                    {translate("Calls per account before switching")}
                   </p>
                 </div>
                 <Input
@@ -1034,9 +1065,9 @@ export default function ProfilePage() {
             {/* Combo Round Robin */}
             <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm sm:text-base">Combo Round Robin</p>
+                <p className="font-medium text-sm sm:text-base">{translate("Combo Round Robin")}</p>
                 <p className="text-xs sm:text-sm text-text-muted">
-                  Cycle through providers in combos instead of always starting with first
+                  {translate("Cycle through providers in combos instead of always starting with first")}
                 </p>
               </div>
               <Toggle
@@ -1050,9 +1081,9 @@ export default function ProfilePage() {
             {settings.comboStrategy === "round-robin" && (
               <div className="flex items-center justify-between pt-2 border-t border-border/50">
                 <div>
-                  <p className="font-medium">Combo Sticky Limit</p>
+                  <p className="font-medium">{translate("Combo Sticky Limit")}</p>
                   <p className="text-sm text-text-muted">
-                    Calls per combo model before switching
+                    {translate("Calls per combo model before switching")}
                   </p>
                 </div>
                 <Input
@@ -1070,9 +1101,9 @@ export default function ProfilePage() {
             {/* F1: Fusion primary/backup failover — global toggle */}
             <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm sm:text-base">Fusion Primary/Backup Failover</p>
+                <p className="font-medium text-sm sm:text-base">{translate("Fusion Primary/Backup Failover")}</p>
                 <p className="text-xs sm:text-sm text-text-muted">
-                  When ON, Fusion combos with {`{primary, backup}`} panel slots fall back to the backup model if the primary call fails. When OFF, only the primary runs.
+                  {translate("When ON, Fusion combos with")} {`{primary, backup}`} {translate("panel slots fall back to the backup model if the primary call fails. When OFF, only the primary runs.")}
                 </p>
               </div>
               <Toggle
@@ -1082,13 +1113,43 @@ export default function ProfilePage() {
               />
             </div>
 
+            {/* Quota Pool */}
+            <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">配额池</p>
+                <p className="text-xs sm:text-sm text-text-muted">
+                  启用后将在多个提供商之间智能分配请求配额
+                </p>
+              </div>
+              <Toggle
+                checked={settings.quotaPoolEnabled === true}
+                onChange={() => updateQuotaPoolEnabled(!(settings.quotaPoolEnabled === true))}
+                disabled={loading}
+              />
+            </div>
+
+            {/* Provider Limits */}
+            <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">提供商限额</p>
+                <p className="text-xs sm:text-sm text-text-muted">
+                  启用后将按配置的速率限制控制各提供商请求频率
+                </p>
+              </div>
+              <Toggle
+                checked={settings.providerLimitsEnabled === true}
+                onChange={() => updateProviderLimitsEnabled(!(settings.providerLimitsEnabled === true))}
+                disabled={loading}
+              />
+            </div>
+
             <p className="text-xs text-text-muted italic pt-2 border-t border-border/50">
               {settings.fallbackStrategy === "round-robin"
-                ? `Currently distributing requests across all available accounts with ${settings.stickyRoundRobinLimit || 3} calls per account.`
-                : "Currently using accounts in priority order (Fill First)."}
+                ? translate("profile.distributingRequests", { count: settings.stickyRoundRobinLimit || 3 })
+                : translate("Currently using accounts in priority order (Fill First).")}
               {settings.comboStrategy === "round-robin"
-                ? ` Combos rotate after ${settings.comboStickyRoundRobinLimit || 1} call${(settings.comboStickyRoundRobinLimit || 1) === 1 ? "" : "s"} per model.`
-                : " Combos always start with their first model."}
+                ? translate("profile.combosRotate", { count: settings.comboStickyRoundRobinLimit || 1, plural: (settings.comboStickyRoundRobinLimit || 1) === 1 ? "" : "s" })
+                : translate(" Combos always start with their first model.")}
             </p>
           </div>
         </Card>
@@ -1099,14 +1160,14 @@ export default function ProfilePage() {
             <div className="p-2 rounded-lg bg-purple-500/10 text-purple-500 shrink-0">
               <span className="material-symbols-outlined text-[20px]">wifi</span>
             </div>
-            <h3 className="text-base sm:text-lg font-semibold">Network</h3>
+            <h3 className="text-base sm:text-lg font-semibold">{translate("Network")}</h3>
           </div>
 
           <div className="flex flex-col gap-4">
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm sm:text-base">Outbound Proxy</p>
-                <p className="text-xs sm:text-sm text-text-muted">Enable proxy for OAuth + provider outbound requests.</p>
+                <p className="font-medium text-sm sm:text-base">{translate("Outbound Proxy")}</p>
+                <p className="text-xs sm:text-sm text-text-muted">{translate("Enable proxy for OAuth + provider outbound requests.")}</p>
               </div>
               <Toggle
                 checked={settings.outboundProxyEnabled === true}
@@ -1118,25 +1179,25 @@ export default function ProfilePage() {
             {settings.outboundProxyEnabled === true && (
               <form onSubmit={updateOutboundProxy} className="flex flex-col gap-4 pt-2 border-t border-border/50">
                 <div className="flex flex-col gap-2">
-                  <label className="font-medium text-sm sm:text-base">Proxy URL</label>
+                  <label className="font-medium text-sm sm:text-base">{translate("Proxy URL")}</label>
                   <Input
                     placeholder="http://127.0.0.1:7897"
                     value={proxyForm.outboundProxyUrl}
                     onChange={(e) => setProxyForm((prev) => ({ ...prev, outboundProxyUrl: e.target.value }))}
                     disabled={loading || proxyLoading}
                   />
-                  <p className="text-xs sm:text-sm text-text-muted">Leave empty to inherit existing env proxy (if any).</p>
+                  <p className="text-xs sm:text-sm text-text-muted">{translate("Leave empty to inherit existing env proxy (if any).")}</p>
                 </div>
 
                 <div className="flex flex-col gap-2 pt-2 border-t border-border/50">
-                  <label className="font-medium text-sm sm:text-base">No Proxy</label>
+                  <label className="font-medium text-sm sm:text-base">{translate("No Proxy")}</label>
                   <Input
                     placeholder="localhost,127.0.0.1"
                     value={proxyForm.outboundNoProxy}
                     onChange={(e) => setProxyForm((prev) => ({ ...prev, outboundNoProxy: e.target.value }))}
                     disabled={loading || proxyLoading}
                   />
-                  <p className="text-xs sm:text-sm text-text-muted">Comma-separated hostnames/domains to bypass the proxy.</p>
+                  <p className="text-xs sm:text-sm text-text-muted">{translate("Comma-separated hostnames/domains to bypass the proxy.")}</p>
                 </div>
 
                 <div className="pt-2 border-t border-border/50 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
@@ -1148,10 +1209,10 @@ export default function ProfilePage() {
                     onClick={testOutboundProxy}
                     className="w-full sm:w-auto"
                   >
-                    Test proxy URL
+                    {translate("Test proxy URL")}
                   </Button>
                   <Button type="submit" variant="primary" loading={proxyLoading} className="w-full sm:w-auto">
-                    Apply
+                    {translate("Apply")}
                   </Button>
                 </div>
               </form>
@@ -1171,13 +1232,13 @@ export default function ProfilePage() {
             <div className="p-2 rounded-lg bg-orange-500/10 text-orange-500 shrink-0">
               <span className="material-symbols-outlined text-[20px]">monitoring</span>
             </div>
-            <h3 className="text-base sm:text-lg font-semibold">Observability</h3>
+            <h3 className="text-base sm:text-lg font-semibold">{translate("Observability")}</h3>
           </div>
           <div className="flex items-start sm:items-center justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-sm sm:text-base">Enable Observability</p>
+              <p className="font-medium text-sm sm:text-base">{translate("Enable Observability")}</p>
               <p className="text-xs sm:text-sm text-text-muted">
-                Record request details for inspection in the logs view
+                {translate("Record request details for inspection in the logs view")}
               </p>
             </div>
             <Toggle
@@ -1194,14 +1255,14 @@ export default function ProfilePage() {
             <div className="p-2 rounded-lg bg-teal-500/10 text-teal-500 shrink-0">
               <span className="material-symbols-outlined text-[20px]">cleaning_services</span>
             </div>
-            <h3 className="text-base sm:text-lg font-semibold">Auto Cleanup</h3>
+            <h3 className="text-base sm:text-lg font-semibold">{translate("Auto Cleanup")}</h3>
           </div>
           <div className="flex flex-col gap-4">
             <div className="flex items-start sm:items-center justify-between gap-4">
               <div className="flex-1 min-w-0">
-                <p className="font-medium text-sm sm:text-base">Enable Auto Cleanup</p>
+                <p className="font-medium text-sm sm:text-base">{translate("Enable Auto Cleanup")}</p>
                 <p className="text-xs sm:text-sm text-text-muted">
-                  Periodically purge old usage data, expired cache, and corrupt DB backups (24h interval)
+                  {translate("Periodically purge old usage data, expired cache, and corrupt DB backups (24h interval)")}
                 </p>
               </div>
               <Toggle
@@ -1214,9 +1275,9 @@ export default function ProfilePage() {
             {settings.autoCleanupEnabled === true && (
               <div className="flex items-start sm:items-center justify-between gap-4 pt-2 border-t border-border/50">
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-sm sm:text-base">Data Retention (days)</p>
+                  <p className="font-medium text-sm sm:text-base">{translate("Data Retention (days)")}</p>
                   <p className="text-xs sm:text-sm text-text-muted">
-                    Records older than this are deleted on each sweep
+                    {translate("Records older than this are deleted on each sweep")}
                   </p>
                 </div>
                 <Input
@@ -1234,15 +1295,15 @@ export default function ProfilePage() {
             {cleanupStatus && (
               <div className="flex flex-col gap-2 pt-2 border-t border-border/50 text-xs sm:text-sm">
                 <div className="flex items-center justify-between">
-                  <span className="text-text-muted">Last cleanup</span>
+                  <span className="text-text-muted">{translate("Last cleanup")}</span>
                   <span className="font-mono">
                     {cleanupStatus.lastCleanupAt
                       ? new Date(cleanupStatus.lastCleanupAt).toLocaleString()
-                      : "Never"}
+                      : translate("Never")}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-text-muted">Next estimated</span>
+                  <span className="text-text-muted">{translate("Next estimated")}</span>
                   <span className="font-mono">
                     {cleanupStatus.nextCleanupAt
                       ? new Date(cleanupStatus.nextCleanupAt).toLocaleString()
@@ -1250,7 +1311,7 @@ export default function ProfilePage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-text-muted">Interval</span>
+                  <span className="text-text-muted">{translate("Interval")}</span>
                   <span>{cleanupStatus.intervalHours || 24}h</span>
                 </div>
               </div>
@@ -1267,7 +1328,7 @@ export default function ProfilePage() {
             onClick={() => setShutdownOpen(true)}
             className="text-red-500 border-red-200 hover:bg-red-50 hover:border-red-300"
           >
-            Shutdown
+            {translate("Shutdown")}
           </Button>
           <Button
             variant="outline"
@@ -1275,14 +1336,14 @@ export default function ProfilePage() {
             icon="logout"
             onClick={handleLogout}
           >
-            Logout
+            {translate("Logout")}
           </Button>
         </div>
 
         {/* App Info */}
         <div className="text-center text-xs sm:text-sm text-text-muted py-4">
           <p>{APP_CONFIG.name} v{APP_CONFIG.version}</p>
-          <p className="mt-1">Local Mode - All data stored on your machine</p>
+          <p className="mt-1">{translate("Local Mode - All data stored on your machine")}</p>
         </div>
       </div>
 
@@ -1298,10 +1359,10 @@ export default function ProfilePage() {
         isOpen={shutdownOpen}
         onClose={() => setShutdownOpen(false)}
         onConfirm={handleShutdown}
-        title="Close Proxy"
-        message="Are you sure you want to close the proxy server?"
-        confirmText="Close"
-        cancelText="Cancel"
+        title={translate("Close Proxy")}
+        message={translate("Are you sure you want to close the proxy server?")}
+        confirmText={translate("Close")}
+        cancelText={translate("Cancel")}
         variant="danger"
         loading={isShuttingDown}
       />
@@ -1309,28 +1370,28 @@ export default function ProfilePage() {
       <Modal
         isOpen={dbAuth.open}
         onClose={() => setDbAuth({ open: false, mode: "", password: "" })}
-        title="Confirm Password"
+        title={translate("Confirm Password")}
         size="sm"
         footer={
           <>
             <Button variant="ghost" onClick={() => setDbAuth({ open: false, mode: "", password: "" })} disabled={dbLoading}>
-              Cancel
+              {translate("Cancel")}
             </Button>
             <Button variant="primary" onClick={handleDbAuthConfirm} loading={dbLoading} disabled={!dbAuth.password}>
-              Confirm
+              {translate("Confirm")}
             </Button>
           </>
         }
       >
         <p className="text-text-muted mb-3 text-sm">
-          Enter your current password to {dbAuth.mode === "export" ? "export" : "import"} the database.
+          {translate("profile.enterPasswordToAction", { action: dbAuth.mode === "export" ? translate("export") : translate("import") })}
         </p>
         <Input
           type="password"
           value={dbAuth.password}
           onChange={(e) => setDbAuth((s) => ({ ...s, password: e.target.value }))}
           onKeyDown={(e) => { if (e.key === "Enter" && dbAuth.password) handleDbAuthConfirm(); }}
-          placeholder="Current password"
+          placeholder={translate("Current password")}
           autoFocus
         />
       </Modal>

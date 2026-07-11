@@ -18,10 +18,10 @@ function parseModelEntry(entry) {
 const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 
 const KIND_LABELS = {
-  webSearch: "Web Search",
-  webFetch: "Web Fetch",
-  image: "Text to Image",
-  tts: "Text To Speech",
+  webSearch: "网页搜索",
+  webFetch: "网页抓取",
+  image: "文生图",
+  tts: "文字转语音",
 };
 
 const EXAMPLE_PATHS = {
@@ -95,8 +95,8 @@ export default function ComboDetailPage() {
   useEffect(() => { fetchAll(); }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const validateName = (v) => {
-    if (!v.trim()) { setNameError("Name is required"); return false; }
-    if (!VALID_NAME_REGEX.test(v)) { setNameError("Only letters, numbers, -, _ and ."); return false; }
+    if (!v.trim()) { setNameError("名称为必填项"); return false; }
+    if (!VALID_NAME_REGEX.test(v)) { setNameError("仅限字母、数字、-、_ 和 ."); return false; }
     setNameError("");
     return true;
   };
@@ -107,7 +107,7 @@ export default function ComboDetailPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
-    if (!res.ok) { const err = await res.json(); alert(err.error || "Failed to save"); return false; }
+    if (!res.ok) { const err = await res.json(); alert(err.error || "保存失败"); return false; }
     return true;
   };
 
@@ -164,7 +164,7 @@ export default function ComboDetailPage() {
   };
 
   const handleDelete = async () => {
-    if (!confirm(`Delete combo "${combo.name}"?`)) return;
+    if (!confirm(`删除组合 "${combo.name}"？`)) return;
     const res = await fetch(`/api/combos/${id}`, { method: "DELETE" });
     if (res.ok) router.push(getListingHref(combo.kind));
   };
@@ -210,7 +210,7 @@ export default function ComboDetailPage() {
         : (first?.url || "");
       setTestResult({ json: JSON.stringify(maskB64(data), null, 2), imageUrl, latencyMs });
     } catch (e) {
-      setTestError(e.message || "Network error");
+      setTestError(e.message || "网络错误");
     }
     setTesting(false);
   };
@@ -228,10 +228,10 @@ export default function ComboDetailPage() {
     return out;
   }
 
-  if (loading) return <div className="text-text-muted text-sm">Loading...</div>;
+  if (loading) return <div className="text-text-muted text-sm">加载中...</div>;
   if (!combo) return notFound();
 
-  const kindLabel = KIND_LABELS[combo.kind] || MEDIA_PROVIDER_KINDS.find((k) => k.id === combo.kind)?.label || "Combo";
+  const kindLabel = KIND_LABELS[combo.kind] || MEDIA_PROVIDER_KINDS.find((k) => k.id === combo.kind)?.label || "组合";
   const examplePath = EXAMPLE_PATHS[combo.kind];
   const exampleBody = combo.kind && EXAMPLE_BODIES[combo.kind] ? EXAMPLE_BODIES[combo.kind](combo.name) : null;
   const curlExample = examplePath
@@ -251,27 +251,27 @@ export default function ComboDetailPage() {
             <span className="material-symbols-outlined text-primary">layers</span>
           </div>
           <div className="min-w-0">
-            <p className="text-xs text-text-muted">{kindLabel} Combo</p>
+            <p className="text-xs text-text-muted">{kindLabel} 组合</p>
             <code className="text-lg font-semibold font-mono">{combo.name}</code>
           </div>
         </div>
         <Button variant="outline" icon="delete" onClick={handleDelete} className="text-red-500 border-red-200 hover:bg-red-50">
-          Delete
+          删除
         </Button>
       </div>
 
       {/* Settings Card */}
       <Card>
-        <h2 className="text-lg font-semibold mb-3">Settings</h2>
+        <h2 className="text-lg font-semibold mb-3">设置</h2>
         <div className="flex flex-col gap-4">
           <div>
-            <Input label="Combo Name" value={name} onChange={(e) => { setName(e.target.value); validateName(e.target.value); }} onBlur={handleSaveName} error={nameError} />
-            <p className="text-[10px] text-text-muted mt-0.5">Only letters, numbers, -, _ and .</p>
+            <Input label="组合名称" value={name} onChange={(e) => { setName(e.target.value); validateName(e.target.value); }} onBlur={handleSaveName} error={nameError} />
+            <p className="text-[10px] text-text-muted mt-0.5">仅限字母、数字、-、_ 和 .</p>
           </div>
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm font-medium">Round Robin</p>
-              <p className="text-xs text-text-muted">Rotate providers across requests instead of strict fallback order.</p>
+              <p className="text-sm font-medium">轮询</p>
+              <p className="text-xs text-text-muted">跨请求轮换提供商，而非严格按顺序回退。</p>
             </div>
             <Toggle checked={roundRobin} onChange={handleToggleRoundRobin} />
           </div>
@@ -282,14 +282,14 @@ export default function ComboDetailPage() {
       <Card>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
           <div>
-            <h2 className="text-lg font-semibold">Providers</h2>
-            <p className="text-xs text-text-muted">Tried in order (top-down) or rotated when round-robin is on.</p>
+            <h2 className="text-lg font-semibold">提供商</h2>
+            <p className="text-xs text-text-muted">按顺序尝试（自上而下）或开启轮询时轮换。</p>
           </div>
-          <Button size="sm" icon="add" onClick={() => setShowPicker(true)}>Add Provider</Button>
+          <Button size="sm" icon="add" onClick={() => setShowPicker(true)}>添加提供商</Button>
         </div>
         {providers.length === 0 ? (
           <div className="text-center py-6 border border-dashed border-border rounded-lg text-text-muted text-sm">
-            No providers yet.
+            暂无提供商。
           </div>
         ) : (
           <div className="flex flex-col gap-2">
@@ -312,13 +312,13 @@ export default function ComboDetailPage() {
                     {model && <code className="text-[10px] text-text-muted font-mono truncate block">{model}</code>}
                   </div>
                   <div className="flex items-center gap-0.5">
-                    <button onClick={() => handleMove(idx, -1)} disabled={idx === 0} className={`p-1 rounded ${idx === 0 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} title="Move up">
+                    <button onClick={() => handleMove(idx, -1)} disabled={idx === 0} className={`p-1 rounded ${idx === 0 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} title="上移">
                       <span className="material-symbols-outlined text-[16px]">arrow_upward</span>
                     </button>
-                    <button onClick={() => handleMove(idx, 1)} disabled={idx === providers.length - 1} className={`p-1 rounded ${idx === providers.length - 1 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} title="Move down">
+                    <button onClick={() => handleMove(idx, 1)} disabled={idx === providers.length - 1} className={`p-1 rounded ${idx === providers.length - 1 ? "text-text-muted/20" : "text-text-muted hover:text-primary hover:bg-black/5"}`} title="下移">
                       <span className="material-symbols-outlined text-[16px]">arrow_downward</span>
                     </button>
-                    <button onClick={() => handleRemoveProvider(idx)} className="p-1 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10" title="Remove">
+                    <button onClick={() => handleRemoveProvider(idx)} className="p-1 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10" title="移除">
                       <span className="material-symbols-outlined text-[16px]">close</span>
                     </button>
                   </div>
@@ -333,9 +333,9 @@ export default function ComboDetailPage() {
       {combo.kind && examplePath && (
         <Card>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-3">
-            <h2 className="text-lg font-semibold">Test Example</h2>
+            <h2 className="text-lg font-semibold">测试示例</h2>
             <Button size="sm" icon="play_arrow" onClick={handleTest} disabled={testing || providers.length === 0}>
-              {testing ? "Running..." : "Run"}
+              {testing ? "运行中..." : "运行"}
             </Button>
           </div>
           <pre className="text-xs font-mono bg-black/[0.03] dark:bg-white/[0.03] p-3 rounded-lg overflow-x-auto whitespace-pre-wrap break-all">
@@ -354,7 +354,7 @@ export default function ComboDetailPage() {
                   <div className="flex items-center justify-end mb-1.5">
                     <a href={testResult.imageUrl} download="image.png" className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors">
                       <span className="material-symbols-outlined text-[14px]">download</span>
-                      Download
+                      下载
                     </a>
                   </div>
                   <img src={testResult.imageUrl} alt="Generated" className="max-w-full rounded-lg border border-border" />
@@ -365,7 +365,7 @@ export default function ComboDetailPage() {
                   <div className="flex items-center justify-end mb-1.5">
                     <a href={testResult.audioUrl} download="speech.mp3" className="inline-flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors">
                       <span className="material-symbols-outlined text-[14px]">download</span>
-                      Download
+                      下载
                     </a>
                   </div>
                   <audio controls src={testResult.audioUrl} className="w-full" />
@@ -383,9 +383,9 @@ export default function ComboDetailPage() {
 
       {/* Usage Logs Card */}
       <Card>
-        <h2 className="text-lg font-semibold mb-3">Usage Logs</h2>
+        <h2 className="text-lg font-semibold mb-3">使用日志</h2>
         {logs.length === 0 ? (
-          <p className="text-xs text-text-muted italic">No usage yet.</p>
+          <p className="text-xs text-text-muted italic">暂无使用记录。</p>
         ) : (
           <pre className="text-[11px] font-mono bg-black/[0.03] dark:bg-white/[0.03] p-3 rounded-lg overflow-auto max-h-[400px] whitespace-pre-wrap">
             {logs.join("\n")}
@@ -400,7 +400,7 @@ export default function ComboDetailPage() {
         onDeselect={handleDeselectModel}
         activeProviders={connections}
         modelAliases={modelAliases}
-        title={`Add ${kindLabel} Model`}
+        title={`添加${kindLabel}模型`}
         kindFilter={combo.kind}
         addedModelValues={providers}
         closeOnSelect={false}

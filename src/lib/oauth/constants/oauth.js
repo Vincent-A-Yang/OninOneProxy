@@ -126,7 +126,6 @@ export const PROVIDERS = {
   QODER: "qoder",
   IFLOW: "iflow",
   ANTIGRAVITY: "antigravity",
-  OPENAI: "openai",
   GITHUB: "github",
   KIRO: "kiro",
   CURSOR: "cursor",

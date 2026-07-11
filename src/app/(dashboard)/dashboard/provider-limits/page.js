@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Card, Button, Modal, Input, Select, Toggle, Badge, ConfirmModal } from "@/shared/components";
 import Tooltip from "@/shared/components/Tooltip";
-import { translate } from "@/i18n/runtime";
 import PROVIDER_REGISTRY from "open-sse/providers/registry/index.js";
 
 /**
@@ -28,6 +27,7 @@ export default function ProviderLimitsPage() {
   const [editingId, setEditingId] = useState(null);
   const [confirmState, setConfirmState] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [enabling, setEnabling] = useState(false);
   const pollRef = useRef(null);
 
   const fetchData = useCallback(async () => {
@@ -45,6 +45,23 @@ export default function ProviderLimitsPage() {
       setLoading(false);
     }
   }, []);
+
+  const handleEnable = useCallback(async () => {
+    setEnabling(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerLimitsEnabled: true }),
+      });
+      if (!res.ok) throw new Error("启用失败");
+      await fetchData();
+    } catch (e) {
+      setError(e.message || "启用失败");
+    } finally {
+      setEnabling(false);
+    }
+  }, [fetchData]);
 
   useEffect(() => {
     fetchData();
@@ -77,7 +94,7 @@ export default function ProviderLimitsPage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || `Failed to ${editingId ? "update" : "create"} limit`);
+        alert(err.error || `${editingId ? "更新" : "创建"}限额失败`);
         return;
       }
       setShowModal(false);
@@ -113,7 +130,7 @@ export default function ProviderLimitsPage() {
       );
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        alert(err.error || "Failed to toggle");
+        alert(err.error || "切换失败");
         return;
       }
       await fetchData();
@@ -124,8 +141,8 @@ export default function ProviderLimitsPage() {
 
   const handleDelete = (cfg) => {
     setConfirmState({
-      title: "Delete Limit",
-      message: `Delete limit for ${cfg.provider}${cfg.scope === "source" ? ` / ${cfg.apiKeyMask || ""}` : ""}?`,
+      title: "删除限额",
+      message: `确定删除 ${cfg.provider}${cfg.scope === "source" ? ` / ${cfg.apiKeyMask || ""}` : ""} 的限额配置？`,
       onConfirm: async () => {
         setConfirmState(null);
         try {
@@ -135,7 +152,7 @@ export default function ProviderLimitsPage() {
           );
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
-            alert(err.error || "Failed to delete");
+            alert(err.error || "删除失败");
             return;
           }
           await fetchData();
@@ -163,22 +180,23 @@ export default function ProviderLimitsPage() {
         <div className="min-w-0">
           <h1 className="text-lg font-semibold flex items-center gap-2">
             <span className="material-symbols-outlined text-primary">speed</span>
-            Provider Limits
+            提供商限额
             {enabled ? (
               <span className="inline-block rounded bg-success/15 px-1.5 py-0.5 text-[10px] font-medium text-success">
-                Enabled
+                已启用
               </span>
             ) : (
               <span className="inline-block rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-medium text-text-muted dark:bg-white/10">
-                Disabled
+                未启用
               </span>
             )}
           </h1>
           <p className="text-sm text-text-muted mt-1">
-            Configure rate windows and quotas per provider or per source. Enable{" "}
-            <code className="font-mono text-xs">providerLimitsEnabled</code> in{" "}
-            <code className="font-mono text-xs">Settings</code>{" "}
-            to activate the limit engine.
+            为每个提供商或来源配置速率窗口和额度。在{" "}
+            <code className="font-mono text-xs">设置</code>{" "}
+            中启用{" "}
+            <code className="font-mono text-xs">providerLimitsEnabled</code>{" "}
+            以激活限额引擎。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -189,41 +207,59 @@ export default function ProviderLimitsPage() {
             onClick={fetchData}
             disabled={loading}
           >
-            Refresh
+            刷新
           </Button>
           <Button variant="primary" size="sm" icon="add" onClick={openCreate}>
-            Add Limit
+            添加限额
           </Button>
         </div>
       </div>
 
       {error && (
         <Card>
-          <div className="text-sm text-red-500">Error: {error}</div>
+          <div className="text-sm text-red-500">错误：{error}</div>
         </Card>
       )}
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        <StatCard label="Total Configs" value={configs.length} icon="list_alt" loading={loading} />
-        <StatCard label="Enabled" value={enabledCount} icon="check_circle" accent="success" loading={loading} />
-        <StatCard label="Providers" value={providerSet.size} icon="dns" loading={loading} />
-        <StatCard label="Live Sources" value={liveSourceCount} icon="sensors" accent="primary" loading={loading} />
+        <StatCard label="总配置数" value={configs.length} icon="list_alt" loading={loading} />
+        <StatCard label="已启用" value={enabledCount} icon="check_circle" accent="success" loading={loading} />
+        <StatCard label="提供商数" value={providerSet.size} icon="dns" loading={loading} />
+        <StatCard label="实时来源数" value={liveSourceCount} icon="sensors" accent="primary" loading={loading} />
       </div>
 
-      {/* Empty state */}
-      {!loading && configs.length === 0 && (
+      {/* Empty state — 未启用时显示一键启用按钮 */}
+      {!loading && !enabled && configs.length === 0 && (
+        <Card>
+          <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
+            <span className="material-symbols-outlined text-text-muted text-[40px]">
+              speed
+            </span>
+            <h2 className="text-sm font-semibold">提供商限额未启用</h2>
+            <p className="max-w-md text-xs text-text-muted">
+              限额引擎当前未启用。点击下方按钮一键启用，即可为每个提供商或来源配置速率和额度限制。
+            </p>
+            <Button variant="primary" size="sm" icon="bolt" onClick={handleEnable} loading={enabling}>
+              一键启用
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/* Empty state — 已启用但无配置 */}
+      {!loading && enabled && configs.length === 0 && (
         <Card>
           <div className="flex flex-col items-center justify-center gap-3 py-10 text-center">
             <span className="material-symbols-outlined text-text-muted text-[40px]">
               inbox
             </span>
-            <h2 className="text-sm font-semibold">No limits configured</h2>
+            <h2 className="text-sm font-semibold">尚未配置任何限额</h2>
             <p className="max-w-md text-xs text-text-muted">
-              No limits configured yet. Click the button below to add a provider limit, or use a preset template to get started quickly.
+              尚未配置任何限额。点击下方按钮添加提供商限额，或使用预设模板快速开始。
             </p>
             <Button variant="primary" size="sm" icon="add" onClick={openCreate}>
-              Add Limit
+              添加限额
             </Button>
           </div>
         </Card>
@@ -236,34 +272,34 @@ export default function ProviderLimitsPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-left text-text-muted">
-                  <th className="py-2 pr-2 font-medium">Provider</th>
+                  <th className="py-2 pr-2 font-medium">提供商</th>
                   <th className="py-2 pr-2 font-medium">
-                    <Tooltip text="Scope: Provider level (applies to all APIKEYs of the provider) / Source level (only applies to the specified APIKEY+Model, higher priority)">
-                      <span>Scope</span>
+                    <Tooltip text="作用域：提供商级别（适用于该提供商的所有 APIKEY）/ 来源级别（仅适用于指定的 APIKEY+模型，优先级更高）">
+                      <span>作用域</span>
                     </Tooltip>
                   </th>
-                  <th className="py-2 pr-2 font-medium">Key / Model</th>
+                  <th className="py-2 pr-2 font-medium">Key / 模型</th>
                   <th className="py-2 pr-2 font-medium">
-                    <Tooltip text="Rate Windows: Set max requests or tokens per second/minute/hour/day. Example: NVIDIA limits 40 requests per minute, exceeding auto-cools for 1 minute.">
-                      <span>Rate Windows</span>
-                    </Tooltip>
-                  </th>
-                  <th className="py-2 pr-2 font-medium">
-                    <Tooltip text="Quota: Token total limit, with selectable units (raw/wan/million/ten million/yi) and periods (daily/monthly/lifetime). Auto-switches to backup source when exhausted.">
-                      <span>Quota</span>
+                    <Tooltip text="速率窗口：设置每秒/分钟/小时/天的最大请求数或 Token 数。例如：NVIDIA 限制每分钟 40 次请求，超出时自动冷却 1 分钟。">
+                      <span>速率窗口</span>
                     </Tooltip>
                   </th>
                   <th className="py-2 pr-2 font-medium">
-                    <Tooltip text="Live Usage: 5-second polling refresh, showing real-time usage of each window. Red indicates over-limit.">
-                      <span>Live Usage</span>
+                    <Tooltip text="额度：Token 总量限制，可选单位（原始/万/百万/千万/亿）和周期（每日/每月/终身）。耗尽时自动切换到备用来源。">
+                      <span>额度</span>
+                    </Tooltip>
+                  </th>
+                  <th className="py-2 pr-2 font-medium">
+                    <Tooltip text="实时用量：每 5 秒轮询刷新，显示各窗口的实时使用情况。红色表示超限。">
+                      <span>实时用量</span>
                     </Tooltip>
                   </th>
                   <th className="py-2 pr-2 text-center font-medium">
-                    <Tooltip text="Enabled: When off, this config doesn't take effect, falls back to next priority (source→provider global→default)">
-                      <span>Enabled</span>
+                    <Tooltip text="启用：关闭后此配置不生效，回退到下一优先级（来源→提供商全局→默认）">
+                      <span>启用</span>
                     </Tooltip>
                   </th>
-                  <th className="py-2 pr-2 text-right font-medium">Actions</th>
+                  <th className="py-2 pr-2 text-right font-medium">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -305,8 +341,8 @@ export default function ProviderLimitsPage() {
           onConfirm={confirmState.onConfirm}
           title={confirmState.title}
           message={confirmState.message}
-          confirmText="Delete"
-          cancelText="Cancel"
+          confirmText="删除"
+          cancelText="取消"
           variant="danger"
         />
       )}
@@ -360,10 +396,10 @@ function ConfigRow({ cfg, onToggle, onEdit, onDelete }) {
         <td className="py-2 pr-2 text-right">
           <div className="inline-flex items-center gap-1">
             <Button variant="ghost" size="sm" icon="edit" onClick={onEdit}>
-              {translate("Edit")}
+              编辑
             </Button>
             <Button variant="ghost" size="sm" icon="delete" onClick={onDelete}>
-              {translate("Delete")}
+              删除
             </Button>
           </div>
         </td>
@@ -396,7 +432,7 @@ function LiveUsageBadges({ cfg }) {
                     ? "bg-red-500/15 text-red-500"
                     : "bg-surface-2 text-text-muted"
                 }`}
-                title={over ? translate("Over limit") : translate("Normal")}
+                title={over ? "超限" : "正常"}
               >
                 {w.used}/{w.limit} {WINDOW_SHORT[w.window] || w.window}
               </span>
@@ -528,26 +564,26 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
     e.preventDefault();
     // Basic client-side validation.
     if (!form.provider || !form.provider.trim()) {
-      alert(translate("Provider is required"));
+      alert("请填写提供商");
       return;
     }
     if (form.scope === "source" && !form.apiKeyMask) {
-      alert(translate("apiKeyMask is required for source scope"));
+      alert("来源级别需要填写 API Key 掩码");
       return;
     }
     if (form.scope === "model" && !form.model) {
-      alert(translate("Model is required for model scope"));
+      alert("模型级别需要填写模型名称");
       return;
     }
     if (!form.rateWindows || form.rateWindows.length === 0) {
-      alert(translate("At least one rate window is required"));
+      alert("至少需要配置一个速率窗口");
       return;
     }
     // Quota windows are optional. When present, each must have tokens>0.
     for (let i = 0; i < (form.quotaWindows || []).length; i++) {
       const q = form.quotaWindows[i];
       if (!q || !(Number(q.tokens) > 0)) {
-        alert(translate("Quota tokens must be a positive number"));
+        alert("额度 Token 数必须为正数");
         return;
       }
     }
@@ -577,15 +613,15 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEdit ? translate("Edit Provider Limit") : translate("Add Provider Limit")}
+      title={isEdit ? "编辑提供商限额" : "添加提供商限额"}
       size="full"
       footer={
         <>
           <Button variant="ghost" onClick={onClose} disabled={saving}>
-            {translate("Cancel")}
+            取消
           </Button>
           <Button variant="primary" onClick={handleSubmit} loading={saving}>
-            {isEdit ? translate("Save Changes") : translate("Create Limit")}
+            {isEdit ? "保存修改" : "创建限额"}
           </Button>
         </>
       }
@@ -595,7 +631,7 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         {!isEdit && (
           <div>
             <p className="text-xs font-medium text-text-muted mb-2">
-              {translate("Preset Templates (click to apply)")}
+              预设模板（点击应用）
             </p>
             <div className="flex flex-wrap gap-2">
               {Object.keys(PRESETS).map((name) => (
@@ -616,19 +652,19 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         {/* Scope + Provider */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Select
-            label={translate("Scope")}
+            label="作用域"
             value={form.scope}
             onChange={(e) => update({ scope: e.target.value })}
             options={[
-              { value: "provider", label: translate("Provider level") },
-              { value: "source", label: translate("Source level") },
-              { value: "model", label: translate("Model level") },
+              { value: "provider", label: "提供商级别" },
+              { value: "source", label: "来源级别" },
+              { value: "model", label: "模型级别" },
             ]}
-            hint={translate("Provider level applies to all sources of the provider; source level matches only the specified apiKey+model; model level matches a specific provider+model")}
+            hint="提供商级别适用于该提供商的所有来源；来源级别仅匹配指定的 APIKEY+模型；模型级别匹配特定提供商+模型"
           />
           <div>
             <label className="text-sm font-medium text-text-main block mb-1.5">
-              {translate("Provider")}
+              提供商
             </label>
             {/* Combobox: Select from registry + manual Input fallback. */}
             <Select
@@ -636,13 +672,13 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
               onChange={(e) => {
                 if (e.target.value) update({ provider: e.target.value });
               }}
-              options={[{ value: "", label: translate("— Select or type below —") }, ...providerOptions]}
-              hint={translate("Select or input provider")}
+              options={[{ value: "", label: "— 选择或在下方输入 —" }, ...providerOptions]}
+              hint="选择或输入提供商"
             />
             <Input
               value={form.provider}
               onChange={(e) => update({ provider: e.target.value })}
-              placeholder={translate("e.g. nvidia (custom)")}
+              placeholder="例如 nvidia（自定义）"
               required
               className="mt-1"
             />
@@ -653,17 +689,17 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         {form.scope === "source" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Input
-              label={translate("API Key Mask")}
+              label="API Key 掩码"
               value={form.apiKeyMask || ""}
               onChange={(e) => update({ apiKeyMask: e.target.value })}
-              placeholder={translate("e.g. sk-...abc")}
+              placeholder="例如 sk-...abc"
               required
             />
             <Input
-              label={translate("Model (optional)")}
+              label="模型（可选）"
               value={form.model || ""}
               onChange={(e) => update({ model: e.target.value })}
-              placeholder={translate("e.g. gpt-4o")}
+              placeholder="例如 gpt-4o"
             />
           </div>
         )}
@@ -672,10 +708,10 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         {form.scope === "model" && (
           <div className="grid grid-cols-1 gap-3">
             <Input
-              label={translate("Model (required for model scope)")}
+              label="模型（模型级别必填）"
               value={form.model || ""}
               onChange={(e) => update({ model: e.target.value })}
-              placeholder={translate("e.g. gpt-4o")}
+              placeholder="例如 gpt-4o"
               required
             />
           </div>
@@ -685,8 +721,8 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-medium text-text-main flex items-center gap-1">
-              {translate("Rate Windows")}
-              <Tooltip text={translate("Rate Windows: Set max requests or tokens per second/minute/hour/day. Example: NVIDIA limits 40 requests per minute, exceeding auto-cools for 1 minute.")} />
+              速率窗口
+              <Tooltip text="速率窗口：设置每秒/分钟/小时/天的最大请求数或 Token 数。例如：NVIDIA 限制每分钟 40 次请求，超出时自动冷却 1 分钟。" />
             </p>
             <Button
               type="button"
@@ -696,21 +732,21 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
               onClick={addRateWindow}
               disabled={form.rateWindows.length >= 5}
             >
-              {translate("Add Window")} ({form.rateWindows.length}/5)
+              添加窗口 ({form.rateWindows.length}/5)
             </Button>
           </div>
           <div className="flex flex-col gap-2">
             {form.rateWindows.map((w, i) => (
               <div key={i} className="flex items-end gap-2">
                 <Select
-                  label={i === 0 ? translate("Window") : undefined}
+                  label={i === 0 ? "窗口" : undefined}
                   value={w.window}
                   onChange={(e) => updateRateWindow(i, { window: e.target.value })}
                   options={WINDOW_OPTIONS}
                   className="flex-1"
                 />
                 <Input
-                  label={i === 0 ? translate("Count") : undefined}
+                  label={i === 0 ? "数量" : undefined}
                   type="number"
                   min="1"
                   value={String(w.count)}
@@ -720,8 +756,8 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
                 <div className="flex-1">
                   {i === 0 && (
                     <label className="text-sm font-medium text-text-main flex items-center gap-1 mb-1.5">
-                      {translate("Unit")}
-                      <Tooltip text={translate("Unit: Requests (by request count) / Tokens (by input + output token total)")} />
+                      单位
+                      <Tooltip text="单位：请求（按请求计数）/ Token（按输入+输出 Token 总数）" />
                     </label>
                   )}
                   <Select
@@ -738,13 +774,13 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
                   onClick={() => removeRateWindow(i)}
                   disabled={form.rateWindows.length <= 1}
                 >
-                  {translate("Remove")}
+                  移除
                 </Button>
               </div>
             ))}
             {form.rateWindows.length === 0 && (
               <p className="text-xs text-text-muted">
-                {translate("No rate windows added yet. Click \"Add Window\" to start configuring.")}
+                尚未添加速率窗口。点击"添加窗口"开始配置。
               </p>
             )}
           </div>
@@ -754,8 +790,8 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         <div>
           <div className="flex items-center justify-between mb-2">
             <p className="text-sm font-medium text-text-main flex items-center gap-1">
-              {translate("Quota Windows")}
-              <Tooltip text={translate("Quota: Token total limit, with selectable units (raw / wan / million / ten million / yi) and periods (daily / monthly / lifetime). Auto-switches to backup source when exhausted. Multiple windows allowed (e.g. daily + monthly).")} />
+              额度窗口
+              <Tooltip text="额度：Token 总量限制，可选单位（原始 / 万 / 百万 / 千万 / 亿）和周期（每日 / 每月 / 终身）。耗尽时自动切换到备用来源。允许多窗口（如每日 + 每月）。" />
             </p>
             <Button
               type="button"
@@ -765,14 +801,14 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
               onClick={addQuotaWindow}
               disabled={form.quotaWindows.length >= 5}
             >
-              {translate("Add Quota Window")} ({form.quotaWindows.length}/5)
+              添加额度窗口 ({form.quotaWindows.length}/5)
             </Button>
           </div>
           <div className="flex flex-col gap-2">
             {form.quotaWindows.map((q, i) => (
               <div key={i} className="flex items-end gap-2">
                 <Input
-                  label={i === 0 ? translate("Token Count") : undefined}
+                  label={i === 0 ? "Token 数量" : undefined}
                   type="number"
                   min="0"
                   step="any"
@@ -783,8 +819,8 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
                 <div className="flex-1">
                   {i === 0 && (
                     <label className="text-sm font-medium text-text-main flex items-center gap-1 mb-1.5">
-                      {translate("Unit")}
-                      <Tooltip text={translate("Token Unit: raw (×1) / wan (×10000) / million (×10⁶) / ten million (×10⁷) / yi (×10⁸)")} />
+                      单位
+                      <Tooltip text="Token 单位：原始 (×1) / 万 (×10000) / 百万 (×10⁶) / 千万 (×10⁷) / 亿 (×10⁸)" />
                     </label>
                   )}
                   <Select
@@ -796,8 +832,8 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
                 <div className="flex-1">
                   {i === 0 && (
                     <label className="text-sm font-medium text-text-main flex items-center gap-1 mb-1.5">
-                      {translate("Period")}
-                      <Tooltip text={translate("Period: daily (resets at UTC 00:00) / monthly (resets on 1st) / lifetime (never resets)")} />
+                      周期
+                      <Tooltip text="周期：每日（UTC 00:00 重置）/ 每月（每月 1 日重置）/ 终身（永不重置）" />
                     </label>
                   )}
                   <Select
@@ -814,13 +850,13 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
                   onClick={() => removeQuotaWindow(i)}
                   disabled={form.quotaWindows.length <= 0}
                 >
-                  {translate("Remove")}
+                  移除
                 </Button>
               </div>
             ))}
             {form.quotaWindows.length === 0 && (
               <p className="text-xs text-text-muted">
-                {translate("No quota windows configured. Click \"Add Quota Window\" to set token budgets.")}
+                尚未配置额度窗口。点击"添加额度窗口"设置 Token 预算。
               </p>
             )}
           </div>
@@ -829,12 +865,12 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         {/* Notes */}
         <div>
           <label className="text-sm font-medium text-text-main block mb-1.5">
-            {translate("Notes")}
+            备注
           </label>
           <textarea
             value={form.notes || ""}
             onChange={(e) => update({ notes: e.target.value })}
-            placeholder={translate("Optional notes...")}
+            placeholder="可选备注..."
             rows={2}
             className="w-full py-2.5 px-3 text-sm text-text-main bg-surface-2 rounded-[10px] border border-transparent placeholder-text-muted/70 focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500/40 transition-all duration-150 ease-out text-[16px] sm:text-sm"
           />
@@ -843,9 +879,9 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         {/* Enabled */}
         <div className="flex items-center justify-between rounded-[10px] border border-border-subtle p-3">
           <div>
-            <p className="text-sm font-medium text-text-main">{translate("Enable this config")}</p>
+            <p className="text-sm font-medium text-text-main">启用此配置</p>
             <p className="text-xs text-text-muted">
-              {translate("When disabled, this config will not participate in rate/quota calculation (but remains in the list).")}
+              关闭后此配置不生效，回退到下一优先级（来源→提供商全局→默认），但保留在列表中。
             </p>
           </div>
           <Toggle
@@ -1001,29 +1037,29 @@ function formatTokenCount(n) {
 /* -------------------------------------------------------------------------- */
 
 const WINDOW_OPTIONS = [
-  { value: "second", label: "Second" },
-  { value: "minute", label: "Minute" },
-  { value: "hour", label: "Hour" },
-  { value: "day", label: "Day" },
+  { value: "second", label: "秒" },
+  { value: "minute", label: "分钟" },
+  { value: "hour", label: "小时" },
+  { value: "day", label: "天" },
 ];
 
 const RATE_UNIT_OPTIONS = [
-  { value: "request", label: "Requests" },
-  { value: "token", label: "Tokens" },
+  { value: "request", label: "请求" },
+  { value: "token", label: "Token" },
 ];
 
 const QUOTA_UNIT_OPTIONS = [
-  { value: "raw", label: "Raw (×1)" },
-  { value: "wan", label: "Wan (×10000)" },
-  { value: "million", label: "Million (×10⁶)" },
-  { value: "tenMillion", label: "Ten Million (×10⁷)" },
-  { value: "yi", label: "Yi (×10⁸)" },
+  { value: "raw", label: "原始 (×1)" },
+  { value: "wan", label: "万 (×10000)" },
+  { value: "million", label: "百万 (×10⁶)" },
+  { value: "tenMillion", label: "千万 (×10⁷)" },
+  { value: "yi", label: "亿 (×10⁸)" },
 ];
 
 const PERIOD_OPTIONS = [
-  { value: "day", label: "Daily" },
-  { value: "month", label: "Monthly" },
-  { value: "lifetime", label: "Lifetime" },
+  { value: "day", label: "每日" },
+  { value: "month", label: "每月" },
+  { value: "lifetime", label: "终身" },
 ];
 
 // Short labels for table cells (compact)

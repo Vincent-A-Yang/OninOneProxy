@@ -24,14 +24,14 @@ function ProviderCard({ provider, kind, connections }) {
   const allDisabled = total > 0 && providerConns.every((c) => c.isActive === false);
 
   const renderStatus = () => {
-    if (isNoAuth) return <Badge variant="success" size="sm">Ready</Badge>;
-    if (allDisabled) return <Badge variant="default" size="sm">Disabled</Badge>;
-    if (total === 0) return <span className="text-xs text-text-muted">No connections</span>;
+    if (isNoAuth) return <Badge variant="success" size="sm">就绪</Badge>;
+    if (allDisabled) return <Badge variant="default" size="sm">已禁用</Badge>;
+    if (total === 0) return <span className="text-xs text-text-muted">暂无连接</span>;
     return (
       <>
-        {connected > 0 && <Badge variant="success" size="sm" dot>{connected} Connected</Badge>}
-        {error > 0 && <Badge variant="error" size="sm" dot>{error} Error</Badge>}
-        {connected === 0 && error === 0 && <Badge variant="default" size="sm">{total} Added</Badge>}
+        {connected > 0 && <Badge variant="success" size="sm" dot>{connected} 已连接</Badge>}
+        {error > 0 && <Badge variant="error" size="sm" dot>{error} 错误</Badge>}
+        {connected === 0 && error === 0 && <Badge variant="default" size="sm">已添加 {total}</Badge>}
       </>
     );
   };
@@ -65,7 +65,7 @@ function ProviderCard({ provider, kind, connections }) {
 
 function ComboList({ combos }) {
   if (combos.length === 0) {
-    return <p className="text-xs text-text-muted italic">No combos yet.</p>;
+    return <p className="text-xs text-text-muted italic">暂无组合。</p>;
   }
   return (
     <div className="flex flex-col gap-2">
@@ -115,9 +115,9 @@ function Section({ title, icon, kind, providers, connections, combos, onCreateCo
         <div className="flex flex-wrap items-center gap-2">
           <span className="material-symbols-outlined text-primary">{icon}</span>
           <h2 className="text-base font-semibold">{title}</h2>
-          <span className="text-xs text-text-muted">({providers.length} providers · {combos.length} combos)</span>
+          <span className="text-xs text-text-muted">({providers.length} 个提供商 · {combos.length} 个组合)</span>
         </div>
-        <Button size="sm" icon="add" onClick={onCreateCombo}>Create Combo</Button>
+        <Button size="sm" icon="add" onClick={onCreateCombo}>创建组合</Button>
       </div>
 
       {/* Combos — top */}
@@ -130,7 +130,7 @@ function Section({ title, icon, kind, providers, connections, combos, onCreateCo
       {/* Providers grid — bottom */}
       {providers.length === 0 ? (
         <div className="text-center py-8 border border-dashed border-border rounded-xl text-text-muted text-sm">
-          No providers.
+          暂无提供商。
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -184,14 +184,14 @@ export default function WebProvidersPage() {
       router.push(`/dashboard/media-providers/combo/${created.id}`);
     } else {
       const err = await res.json();
-      alert(err.error || "Failed to create combo");
+      alert(err.error || "创建组合失败");
     }
   };
 
   return (
     <div className="flex flex-col gap-8">
       <Section
-        title="Web Search" icon="search" kind="webSearch"
+        title="网页搜索" icon="search" kind="webSearch"
         providers={searchProviders} connections={connections} combos={searchCombos}
         onCreateCombo={() => handleCreateCombo("webSearch")}
       />
@@ -200,7 +200,7 @@ export default function WebProvidersPage() {
       <div className="border-t border-border" />
 
       <Section
-        title="Web Fetch" icon="travel_explore" kind="webFetch"
+        title="网页抓取" icon="travel_explore" kind="webFetch"
         providers={fetchProviders} connections={connections} combos={fetchCombos}
         onCreateCombo={() => handleCreateCombo("webFetch")}
       />

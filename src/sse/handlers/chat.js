@@ -572,7 +572,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastStatus = null;
 
   // === F5 Quota Pool Integration ===
-  // Fail-open: any quotaPool error degrades to original 9Router behavior.
+  // Fail-open: any quotaPool error degrades to original OninOneProxy behavior.
   // The pool tracks per-source RPM/TPM sliding-window rate and cooldown state,
   // so cooling sources are skipped and usage is recorded for load balancing.
   const f5Settings = await getSettings();

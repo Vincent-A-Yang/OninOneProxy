@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
  * Dashboard quota-pool panel.
  *
  * The stats are process-local in-memory (per-process), so this endpoint
- * reflects the state of the currently running 9Router instance only. A
+ * reflects the state of the currently running OninOneProxy instance only. A
  * restart zeroes the counters — by design, the task spec calls for a
  * simple in-memory counter (重启清零).
  *

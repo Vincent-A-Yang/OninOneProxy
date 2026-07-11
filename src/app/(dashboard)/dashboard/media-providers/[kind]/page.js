@@ -36,14 +36,14 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
   };
 
   const renderStatus = () => {
-    if (isNoAuth) return <Badge variant="success" size="sm">Ready</Badge>;
-    if (allDisabled) return <Badge variant="default" size="sm">Disabled</Badge>;
-    if (total === 0) return <span className="text-xs text-text-muted">No connections</span>;
+    if (isNoAuth) return <Badge variant="success" size="sm">就绪</Badge>;
+    if (allDisabled) return <Badge variant="default" size="sm">已禁用</Badge>;
+    if (total === 0) return <span className="text-xs text-text-muted">暂无连接</span>;
     return (
       <>
-        {connected > 0 && <Badge variant="success" size="sm" dot>{connected} Connected</Badge>}
-        {error > 0 && <Badge variant="error" size="sm" dot>{error} Error</Badge>}
-        {connected === 0 && error === 0 && <Badge variant="default" size="sm">{total} Added</Badge>}
+        {connected > 0 && <Badge variant="success" size="sm" dot>{connected} 已连接</Badge>}
+        {error > 0 && <Badge variant="error" size="sm" dot>{error} 错误</Badge>}
+        {connected === 0 && error === 0 && <Badge variant="default" size="sm">已添加 {total}</Badge>}
       </>
     );
   };
@@ -72,7 +72,7 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
             <div className="min-w-0">
               <h3 className="font-semibold text-sm">{provider.name}</h3>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                {isCustom && <Badge variant="default" size="sm">Custom</Badge>}
+                {isCustom && <Badge variant="default" size="sm">自定义</Badge>}
                 {renderStatus()}
               </div>
             </div>
@@ -86,7 +86,7 @@ function MediaProviderCard({ provider, kind, connections, isCustom, onToggle }) 
                 size="sm"
                 checked={!allDisabled}
                 onChange={() => {}}
-                title={allDisabled ? "Enable provider" : "Disable provider"}
+                title={allDisabled ? "启用提供商" : "禁用提供商"}
               />
             </div>
           )}
@@ -184,7 +184,7 @@ export default function MediaProviderKindPage() {
   // Map custom nodes to MediaProviderCard shape
   const customProviders = customNodes.map((n) => ({
     id: n.id,
-    name: n.name || "Custom Embedding",
+    name: n.name || "自定义 Embedding",
     color: "#6366F1",
     textIcon: "CE",
   }));
@@ -223,7 +223,7 @@ export default function MediaProviderKindPage() {
       router.push(`/dashboard/media-providers/combo/${created.id}`);
     } else {
       const err = await res.json();
-      alert(err.error || "Failed to create combo");
+      alert(err.error || "创建组合失败");
     }
   };
 
@@ -232,11 +232,11 @@ export default function MediaProviderKindPage() {
       {(isEmbedding || supportsCombo) && (
         <div className="flex items-center justify-end gap-2">
           {supportsCombo && (
-            <Button size="sm" icon="add" onClick={handleCreateCombo}>Create Combo</Button>
+            <Button size="sm" icon="add" onClick={handleCreateCombo}>创建组合</Button>
           )}
           {isEmbedding && (
             <Button size="sm" icon="add" onClick={() => setShowAddCustomEmbedding(true)}>
-              Add Custom Embedding
+              添加自定义 Embedding
             </Button>
           )}
         </div>
@@ -248,7 +248,7 @@ export default function MediaProviderKindPage() {
 
       {allProviders.length === 0 ? (
         <div className="text-center py-12 border border-dashed border-border rounded-xl text-text-muted text-sm">
-          No providers support <strong>{kindConfig.label}</strong> yet.
+          暂无提供商支持 <strong>{kindConfig.label}</strong>。
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">

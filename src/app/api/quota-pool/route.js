@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
  *
  * Returns the unified quota/rate pool snapshot for the Dashboard panel.
  * The pool is in-memory (per-process), so this endpoint reflects the state
- * of the currently running 9Router instance only.
+ * of the currently running OninOneProxy instance only.
  *
  * Response shape:
  *   {

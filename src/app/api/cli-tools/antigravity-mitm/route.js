@@ -106,7 +106,7 @@ export async function POST(request) {
 
     if (!checkPrivilege(pwd)) {
       return NextResponse.json(
-        { error: isWin ? "Administrator required — restart 9Router as Administrator" : "Root or sudo password required to start MITM" },
+        { error: isWin ? "Administrator required — restart OninOneProxy as Administrator" : "Root or sudo password required to start MITM" },
         { status: 403 }
       );
     }
@@ -174,7 +174,7 @@ export async function PATCH(request) {
     }
     if (!checkPrivilege(pwd)) {
       return NextResponse.json(
-        { error: isWin ? "Administrator required — restart 9Router as Administrator" : "Root or sudo password required to modify DNS" },
+        { error: isWin ? "Administrator required — restart OninOneProxy as Administrator" : "Root or sudo password required to modify DNS" },
         { status: 403 }
       );
     }

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Card, Button, Input, Modal, Toggle } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
-import { getCurrentLocale, onLocaleChange } from "@/i18n/runtime";
+import { getCurrentLocale, onLocaleChange, translate } from "@/i18n/runtime";
 import {
   WENYAN_LOCALES,
   CAVEMAN_LEVELS,
@@ -128,7 +128,7 @@ export default function TokenSaverClient() {
     try {
       const res = await fetch("/api/headroom/start", { method: "POST" });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "Failed to start proxy");
+      if (!res.ok) throw new Error(data.error || translate("Failed to start proxy"));
       await refreshHeadroomStatus();
     } catch (e) {
       setHeadroomActionError(e.message);
@@ -259,14 +259,14 @@ export default function TokenSaverClient() {
 
   const headroomRunning = !!headroomStatus.running;
   const headroomStatusLabel = headroomStatus.loading
-    ? "Checking…"
+    ? translate("Checking…")
     : headroomRunning
-      ? "Running"
+      ? translate("Running")
       : headroomStatus.localUrl !== false && !headroomStatus.installed
-        ? "Not installed"
+        ? translate("Not installed")
         : headroomStatus.localUrl !== false
-          ? "Stopped"
-          : "External";
+          ? translate("Stopped")
+          : translate("External");
 
   const headroomLocalUrl = headroomStatus.localUrl !== false;
   const headroomCanStart = !!headroomStatus.canStart;
@@ -307,45 +307,43 @@ export default function TokenSaverClient() {
             onClick={refreshStats}
             disabled={statsLoading}
           >
-            {statsLoading ? "Refreshing…" : "Refresh Stats"}
+            {statsLoading ? translate("Refreshing…") : translate("Refresh Stats")}
           </Button>
         </div>
         <div className="grid grid-cols-3 gap-4">
           <div className="rounded-lg border border-border p-4">
-            <p className="text-xs text-text-muted">Total Saved</p>
+            <p className="text-xs text-text-muted">{translate("Total Saved")}</p>
             <p className="text-2xl font-bold text-success">
               {totalSaved.toLocaleString()}
             </p>
-            <p className="text-xs text-text-muted">tokens</p>
+            <p className="text-xs text-text-muted">{translate("tokens")}</p>
           </div>
           <div className="rounded-lg border border-border p-4">
-            <p className="text-xs text-text-muted">Today</p>
+            <p className="text-xs text-text-muted">{translate("Today")}</p>
             <p className="text-2xl font-bold text-primary">
               {todaySaved.toLocaleString()}
             </p>
-            <p className="text-xs text-text-muted">tokens</p>
+            <p className="text-xs text-text-muted">{translate("tokens")}</p>
           </div>
           <div className="rounded-lg border border-border p-4">
-            <p className="text-xs text-text-muted">Last Request</p>
+            <p className="text-xs text-text-muted">{translate("Last Request")}</p>
             <p className="text-2xl font-bold text-warning">
               {lastSaved.toLocaleString()}
             </p>
-            <p className="text-xs text-text-muted">tokens</p>
+            <p className="text-xs text-text-muted">{translate("tokens")}</p>
           </div>
         </div>
         <p className="text-xs text-text-muted mt-3">
-          Stats are in-memory and reset on container restart. Counts include
-          RTK + Headroom (Caveman/Ponytail affect output tokens indirectly).
+          {translate("Stats are in-memory and reset on container restart. Counts include RTK + Headroom (Caveman/Ponytail affect output tokens indirectly).")}
         </p>
       </Card>
 
       {/* Preset templates: max savings / balanced / off */}
       <Card>
         <div className="mb-3">
-          <h3 className="font-semibold">Preset Templates</h3>
+          <h3 className="font-semibold">{translate("Preset Templates")}</h3>
           <p className="text-sm text-text-muted">
-            One-click apply a recommended combination. Headroom requires its
-            own service — manage it separately below.
+            {translate("One-click apply a recommended combination. Headroom requires its own service — manage it separately below.")}
           </p>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -359,11 +357,10 @@ export default function TokenSaverClient() {
               <span className="material-symbols-outlined text-success text-xl">
                 rocket_launch
               </span>
-              <span className="font-semibold">Max Savings</span>
+              <span className="font-semibold">{translate("Max Savings")}</span>
             </div>
             <p className="text-xs text-text-muted">
-              RTK + Caveman ultra + Ponytail ultra. Aggressive compression,
-              tersest output. Best for cost-sensitive workloads.
+              {translate("RTK + Caveman ultra + Ponytail ultra. Aggressive compression, tersest output. Best for cost-sensitive workloads.")}
             </p>
           </button>
           <button
@@ -376,11 +373,10 @@ export default function TokenSaverClient() {
               <span className="material-symbols-outlined text-primary text-xl">
                 balance
               </span>
-              <span className="font-semibold">Balanced</span>
+              <span className="font-semibold">{translate("Balanced")}</span>
             </div>
             <p className="text-xs text-text-muted">
-              RTK + Caveman full + Ponytail full. Solid savings with readable
-              output. Recommended for most users.
+              {translate("RTK + Caveman full + Ponytail full. Solid savings with readable output. Recommended for most users.")}
             </p>
           </button>
           <button
@@ -393,11 +389,10 @@ export default function TokenSaverClient() {
               <span className="material-symbols-outlined text-text-muted text-xl">
                 power_off
               </span>
-              <span className="font-semibold">Off</span>
+              <span className="font-semibold">{translate("Off")}</span>
             </div>
             <p className="text-xs text-text-muted">
-              Disable RTK, Caveman, and Ponytail. Pass-through without
-              compression. Use when fidelity matters more than cost.
+              {translate("Disable RTK, Caveman, and Ponytail. Pass-through without compression. Use when fidelity matters more than cost.")}
             </p>
           </button>
         </div>
@@ -410,7 +405,7 @@ export default function TokenSaverClient() {
             <span className="material-symbols-outlined text-primary">
               bolt
             </span>
-            Token Saver
+            {translate("Token Saver")}
           </h2>
         </div>
 
@@ -418,25 +413,21 @@ export default function TokenSaverClient() {
         <div className="flex items-center justify-between pt-2 pb-4 border-b border-border gap-4">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
-              Compress tool output{" "}
+              {translate("Compress tool output")}{" "}
               <a
                 href="https://github.com/rtk-ai/rtk"
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs font-normal text-primary underline hover:opacity-80"
               >
-                (RTK)
+                {translate("(RTK)")}
               </a>
             </p>
             <p className="text-sm text-text-muted">
-              git/grep/ls/tree/logs → 60-90% fewer input tokens
+              {translate("git/grep/ls/tree/logs → 60-90% fewer input tokens")}
             </p>
             <p className="text-xs text-text-muted mt-1">
-              Automatically detects tool outputs (git log, grep results, file
-              listings, build logs) and compresses them — keeping the meaning
-              while removing redundant whitespace, paths, and formatting.
-              Safest module: never changes the model&apos;s behavior, only
-              trims what you paste in.
+              {translate("Automatically detects tool outputs (git log, grep results, file listings, build logs) and compresses them — keeping the meaning while removing redundant whitespace, paths, and formatting. Safest module: never changes the model's behavior, only trims what you paste in.")}
             </p>
           </div>
           <Toggle
@@ -450,14 +441,14 @@ export default function TokenSaverClient() {
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-3 flex-wrap">
               <p className="font-medium">
-                Compress context{" "}
+                {translate("Compress context")}{" "}
                 <a
                   href="https://github.com/chopratejas/headroom"
                   target="_blank"
                   rel="noreferrer"
                   className="text-xs font-normal text-primary underline hover:opacity-80"
                 >
-                  (Headroom)
+                  {translate("(Headroom)")}
                 </a>
               </p>
               <span
@@ -470,18 +461,14 @@ export default function TokenSaverClient() {
                 onClick={() => setShowHeadroomInstallModal(true)}
                 className="text-xs text-primary underline hover:opacity-80"
               >
-                {headroomRunning ? "Manage" : "Setup"}
+                {headroomRunning ? translate("Manage") : translate("Setup")}
               </button>
             </div>
             <p className="text-sm text-text-muted mt-1">
-              Compress prompts via /v1/compress before routing to the model
+              {translate("Compress prompts via /v1/compress before routing to the model")}
             </p>
             <p className="text-xs text-text-muted mt-1">
-              External proxy that runs alongside the gateway. Sends the prompt
-              to a local LLM that rewrites it shorter before forwarding to
-              your provider. Most powerful but needs Python ≥ 3.10 and a
-              separate process. Use async mode to avoid blocking on cache
-              misses.
+              {translate("External proxy that runs alongside the gateway. Sends the prompt to a local LLM that rewrites it shorter before forwarding to your provider. Most powerful but needs Python ≥ 3.10 and a separate process. Use async mode to avoid blocking on cache misses.")}
             </p>
           </div>
           <Toggle
@@ -493,12 +480,9 @@ export default function TokenSaverClient() {
         {headroomEnabled && headroomRunning && (
           <div className="flex items-center justify-between pt-4 border-t border-border gap-4 flex-wrap">
             <div className="min-w-0 flex-1">
-              <p className="font-medium">Async compression</p>
+              <p className="font-medium">{translate("Async compression")}</p>
               <p className="text-sm text-text-muted">
-                Fire Headroom in the background without blocking dispatch. The
-                current request skips compression for lowest latency;
-                subsequent identical prompts hit the warmed cache
-                synchronously.
+                {translate("Fire Headroom in the background without blocking dispatch. The current request skips compression for lowest latency; subsequent identical prompts hit the warmed cache synchronously.")}
               </p>
             </div>
             <Toggle
@@ -512,25 +496,21 @@ export default function TokenSaverClient() {
         <div className="flex items-center justify-between pt-4 gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
-              Compress LLM output{" "}
+              {translate("Compress LLM output")}{" "}
               <a
                 href="https://github.com/JuliusBrussee/caveman"
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs font-normal text-primary underline hover:opacity-80"
               >
-                (Caveman)
+                {translate("(Caveman)")}
               </a>
             </p>
             <p className="text-sm text-text-muted">
-              Terse-style system prompt → ~65% fewer output tokens (up to 87%)
+              {translate("Terse-style system prompt → ~65% fewer output tokens (up to 87%)")}
             </p>
             <p className="text-xs text-text-muted mt-1">
-              Injects a system instruction that tells the model to answer
-              tersely — short sentences, no filler, no restating the question.
-              Higher levels trade readability for more savings. Wenyan levels
-              (文言) require a Chinese locale and produce classical-Chinese
-              style output.
+              {translate("Injects a system instruction that tells the model to answer tersely — short sentences, no filler, no restating the question. Higher levels trade readability for more savings. Wenyan levels (文言) require a Chinese locale and produce classical-Chinese style output.")}
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
@@ -571,26 +551,21 @@ export default function TokenSaverClient() {
         <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
-              Lazy senior dev{" "}
+              {translate("Lazy senior dev")}{" "}
               <a
                 href="https://github.com/DietrichGebert/ponytail"
                 target="_blank"
                 rel="noreferrer"
                 className="text-xs font-normal text-primary underline hover:opacity-80"
               >
-                (Ponytail)
+                {translate("(Ponytail)")}
               </a>
             </p>
             <p className="text-sm text-text-muted">
-              Bias the model toward minimal code: YAGNI, reuse stdlib,
-              deletion over addition
+              {translate("Bias the model toward minimal code: YAGNI, reuse stdlib, deletion over addition")}
             </p>
             <p className="text-xs text-text-muted mt-1">
-              Injects a system instruction that frames the model as a lazy
-              senior developer — prefer reusing standard libraries over new
-              code, delete rather than add, never build features that aren&apos;t
-              requested. Reduces output length and surface area. Combine with
-              Caveman for compounding savings.
+              {translate("Injects a system instruction that frames the model as a lazy senior developer — prefer reusing standard libraries over new code, delete rather than add, never build features that aren't requested. Reduces output length and surface area. Combine with Caveman for compounding savings.")}
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
@@ -630,12 +605,12 @@ export default function TokenSaverClient() {
 
       <Modal
         isOpen={showHeadroomInstallModal}
-        title={headroomRunning ? "Headroom" : "Setup Headroom"}
+        title={headroomRunning ? translate("Headroom") : translate("Setup Headroom")}
         onClose={() => setShowHeadroomInstallModal(false)}
       >
         <div className="flex flex-col gap-4">
           <div className="flex items-center justify-between text-sm">
-            <span>Status</span>
+            <span>{translate("Status")}</span>
             <span
               className={headroomRunning ? "text-success" : "text-warning"}
             >
@@ -649,11 +624,11 @@ export default function TokenSaverClient() {
               rel="noreferrer"
               className="w-full rounded border border-border px-4 py-2 text-center text-sm hover:bg-surface-2"
             >
-              Open Headroom Dashboard
+              {translate("Open Headroom Dashboard")}
             </a>
           )}
           <div className="flex flex-col gap-1">
-            <p className="text-sm font-medium">Proxy URL</p>
+            <p className="text-sm font-medium">{translate("Proxy URL")}</p>
             <Input
               value={headroomUrl}
               onChange={(e) => setHeadroomUrl(e.target.value)}
@@ -662,8 +637,7 @@ export default function TokenSaverClient() {
               className="font-mono text-sm"
             />
             <p className="text-xs text-text-muted">
-              Use a local proxy for Start/Stop, or an external Docker sidecar
-              like http://headroom:8787.
+              {translate("Use a local proxy for Start/Stop, or an external Docker sidecar like http://headroom:8787.")}
             </p>
           </div>
           {headroomManaged ? (
@@ -673,11 +647,11 @@ export default function TokenSaverClient() {
               fullWidth
               disabled={headroomActionLoading}
             >
-              {headroomActionLoading ? "Stopping…" : "Stop Headroom"}
+              {headroomActionLoading ? translate("Stopping…") : translate("Stop Headroom")}
             </Button>
           ) : headroomRunning ? (
             <p className="text-sm text-success">
-              Headroom proxy is reachable. You can enable the token saver.
+              {translate("Headroom proxy is reachable. You can enable the token saver.")}
             </p>
           ) : headroomCanStart ? (
             <Button
@@ -685,20 +659,19 @@ export default function TokenSaverClient() {
               fullWidth
               disabled={headroomActionLoading}
             >
-              {headroomActionLoading ? "Starting…" : "Start Headroom"}
+              {headroomActionLoading ? translate("Starting…") : translate("Start Headroom")}
             </Button>
           ) : !headroomLocalUrl ? (
             <p className="text-sm text-warning">
-              Start Headroom separately at the configured URL, then recheck.
+              {translate("Start Headroom separately at the configured URL, then recheck.")}
             </p>
           ) : !headroomStatus.python ? (
             <p className="text-sm text-warning">
-              Python ≥ 3.10 required for local managed mode. Install Python
-              first, or use an external proxy URL.
+              {translate("Python ≥ 3.10 required for local managed mode. Install Python first, or use an external proxy URL.")}
             </p>
           ) : (
             <div className="flex flex-col gap-1">
-              <p className="text-sm font-medium">Install then click Start:</p>
+              <p className="text-sm font-medium">{translate("Install then click Start:")}</p>
               <div className="flex items-center gap-2">
                 <pre className="flex-1 rounded bg-black/5 dark:bg-white/5 p-2 text-xs font-mono overflow-x-auto">
                   {`pip install "headroom-ai[proxy]"`}
@@ -710,7 +683,7 @@ export default function TokenSaverClient() {
                     copy(`pip install "headroom-ai[proxy]"`)
                   }
                 >
-                  {copied ? "Copied" : "Copy"}
+                  {copied ? translate("Copied") : translate("Copy")}
                 </Button>
               </div>
             </div>

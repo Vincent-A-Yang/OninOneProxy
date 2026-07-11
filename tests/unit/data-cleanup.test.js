@@ -115,11 +115,12 @@ describe("cleanupOldData — transactional DELETE", () => {
     // transaction wrapper should have been called.
     expect(dbMock.transaction).toHaveBeenCalledTimes(1);
 
-    // Two DELETEs should have been issued.
-    expect(dbMock.run).toHaveBeenCalledTimes(2);
+    // Three DELETEs should have been issued: usageHistory, usageDaily, responseCache (age-based).
+    expect(dbMock.run).toHaveBeenCalledTimes(3);
     const deleteCalls = dbMock.run.mock.calls.map((c) => c[0]);
     expect(deleteCalls.some((sql) => /DELETE FROM usageHistory/i.test(sql))).toBe(true);
     expect(deleteCalls.some((sql) => /DELETE FROM usageDaily/i.test(sql))).toBe(true);
+    expect(deleteCalls.some((sql) => /DELETE FROM responseCache/i.test(sql))).toBe(true);
 
     expect(result.historyDeleted).toBe(42);
     expect(result.dailyDeleted).toBe(42); // same mock for both calls
@@ -160,7 +161,7 @@ describe("cleanupOldData — transactional DELETE", () => {
     // No UPDATE _meta or DELETE FROM _meta.
     for (const call of dbMock.run.mock.calls) {
       const sql = call[0];
-      expect(sql).toMatch(/DELETE FROM (usageHistory|usageDaily)/i);
+      expect(sql).toMatch(/DELETE FROM (usageHistory|usageDaily|responseCache)/i);
       expect(sql).not.toMatch(/_meta/i);
     }
   });

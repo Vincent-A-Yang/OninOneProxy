@@ -10,7 +10,11 @@ RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
   apk --no-cache upgrade && apk --no-cache add python3 make g++ linux-headers
 
 COPY package.json ./
+# Use Chinese npm + node headers mirror to avoid slow proxy downloads.
+# npmmirror.com mirrors both npm packages and node headers (for node-gyp).
 RUN --mount=type=cache,target=/root/.npm \
+  npm config set registry https://registry.npmmirror.com && \
+  NODEJS_ORG_MIRROR=https://registry.npmmirror.com/-/binary/node \
   npm install
 
 COPY . ./

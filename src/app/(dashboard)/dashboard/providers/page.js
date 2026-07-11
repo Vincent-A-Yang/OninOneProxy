@@ -23,22 +23,46 @@ import Link from "next/link";
 import { getErrorCode, getRelativeTime } from "@/shared/utils";
 import { useNotificationStore } from "@/store/notificationStore";
 import { useHeaderSearchStore } from "@/store/headerSearchStore";
+import { translate } from "@/i18n/runtime";
 import ModelAvailabilityBadge from "./components/ModelAvailabilityBadge";
 import AddCompatibleModal from "./components/AddCompatibleModal";
+
+/**
+ * Returns a friendly display name for a provider. For openai-compatible-*
+ * provider IDs, generates a human-readable name based on the apiType suffix
+ * instead of showing the raw ID.
+ * @param {{id?: string, name?: string, provider?: string}} provider
+ * @returns {string|undefined}
+ */
+function getDisplayName(provider) {
+  const id = provider?.id || provider?.provider || "";
+  const name = provider?.name;
+  if (name) return name;
+  if (typeof id === "string" && id.startsWith("openai-compatible-")) {
+    const rest = id.slice("openai-compatible-".length);
+    if (rest.startsWith("chat-")) return translate("OpenAI Compatible (Chat)");
+    if (rest.startsWith("responses-")) return translate("OpenAI Compatible (Responses)");
+    return translate("OpenAI Compatible");
+  }
+  if (typeof id === "string" && id.startsWith("anthropic-compatible-")) {
+    return translate("Anthropic Compatible");
+  }
+  return name;
+}
 
 function getStatusDisplay(connected, error, errorCode) {
   const parts = [];
   if (connected > 0) {
     parts.push(
       <Badge key="connected" variant="success" size="sm" dot>
-        {connected} Connected
+        {connected} {translate("Connected")}
       </Badge>,
     );
   }
   if (error > 0) {
     const errText = errorCode
-      ? `${error} Error (${errorCode})`
-      : `${error} Error`;
+      ? `${error} ${translate("Error")} (${errorCode})`
+      : `${error} ${translate("Error")}`;
     parts.push(
       <Badge key="error" variant="error" size="sm" dot>
         {errText}
@@ -46,7 +70,7 @@ function getStatusDisplay(connected, error, errorCode) {
     );
   }
   if (parts.length === 0) {
-    return <span className="text-text-muted">No connections</span>;
+    return <span className="text-text-muted">{translate("No connections")}</span>;
   }
   return parts;
 }
@@ -700,7 +724,7 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle, onAddNo
               />
             </div>
             <div className="min-w-0">
-              <h3 className="truncate font-semibold">{provider.name}</h3>
+              <h3 className="truncate font-semibold">{getDisplayName(provider)}</h3>
               <div className="flex min-w-0 items-center gap-1.5 text-xs flex-wrap">
                 {allDisabled ? (
                   <Badge variant="default" size="sm">
@@ -708,17 +732,17 @@ function ProviderCard({ providerId, provider, stats, authType, onToggle, onAddNo
                       <span className="material-symbols-outlined text-[12px]">
                         pause_circle
                       </span>
-                      Disabled
+                      {translate("Disabled")}
                     </span>
                   </Badge>
                 ) : isNoAuth ? (
                   <>
                     {total > 0 ? (
                       <Badge variant="success" size="sm" dot>
-                        {total} Instance{total > 1 ? "s" : ""}
+                        {total} {total > 1 ? translate("Instances") : translate("Instance")}
                       </Badge>
                     ) : (
-                      <Badge variant="success" size="sm" dot>Ready</Badge>
+                      <Badge variant="success" size="sm" dot>{translate("Ready")}</Badge>
                     )}
                   </>
                 ) : (

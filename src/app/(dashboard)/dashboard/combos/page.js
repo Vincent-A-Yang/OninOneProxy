@@ -7,6 +7,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
 import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select, Toggle } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { translate } from "@/i18n/runtime";
 import { isOpenAICompatibleProvider, isAnthropicCompatibleProvider } from "@/shared/constants/providers";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
@@ -114,7 +115,7 @@ export default function CombosPage() {
         setShowCreateModal(false);
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to create combo");
+        alert(err.error || translate("Failed to create combo"));
       }
     } catch (error) {
       console.log("Error creating combo:", error);
@@ -133,7 +134,7 @@ export default function CombosPage() {
         setEditingCombo(null);
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to update combo");
+        alert(err.error || translate("Failed to update combo"));
       }
     } catch (error) {
       console.log("Error updating combo:", error);
@@ -142,8 +143,8 @@ export default function CombosPage() {
 
   const handleDelete = async (id) => {
     setConfirmState({
-      title: "Delete Combo",
-      message: "Delete this combo?",
+      title: translate("Delete Combo"),
+      message: translate("Delete this combo?"),
       onConfirm: async () => {
         setConfirmState(null);
         try {
@@ -198,17 +199,17 @@ export default function CombosPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="text-sm text-text-muted mt-1">
-            Group models under one name, then pick a strategy per combo:
+            {translate("Group models under one name, then pick a strategy per combo:")}
           </p>
           <ul className="text-sm text-text-muted mt-2 flex flex-col gap-1">
-            <li><span className="font-medium text-text-main">Fallback</span> — tries models in order (next on failure)</li>
-            <li><span className="font-medium text-text-main">Round Robin</span> — rotates models across requests to spread load</li>
-            <li><span className="font-medium text-text-main">Fusion</span> — queries all models in parallel, then a judge synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge (N+1 calls)</li>
-            <li><span className="font-medium text-text-main">Capacity auto-switch</span> — sends image/PDF/audio requests to a model that supports them first</li>
+            <li><span className="font-medium text-text-main">{translate("Fallback")}</span> {translate("— tries models in order (next on failure)")}</li>
+            <li><span className="font-medium text-text-main">{translate("Round Robin")}</span> {translate("— rotates models across requests to spread load")}</li>
+            <li><span className="font-medium text-text-main">{translate("Fusion")}</span> {translate("— queries all models in parallel, then a judge synthesizes one answer. Best quality, but costs the most: every request bills all panel models + the judge (N+1 calls)")}</li>
+            <li><span className="font-medium text-text-main">{translate("Capacity auto-switch")}</span> {translate("— sends image/PDF/audio requests to a model that supports them first")}</li>
           </ul>
         </div>
         <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto whitespace-nowrap">
-          Create Combo
+          {translate("Create Combo")}
         </Button>
       </div>
 
@@ -219,10 +220,10 @@ export default function CombosPage() {
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 text-primary mb-4">
               <span className="material-symbols-outlined text-[32px]">layers</span>
             </div>
-            <p className="text-text-main font-medium mb-1">No combos yet</p>
-            <p className="text-sm text-text-muted mb-4">Create model combos with fallback support</p>
+            <p className="text-text-main font-medium mb-1">{translate("No combos yet")}</p>
+            <p className="text-sm text-text-muted mb-4">{translate("Create model combos with fallback support")}</p>
             <Button icon="add" onClick={() => setShowCreateModal(true)} className="w-full sm:w-auto">
-              Create Combo
+              {translate("Create Combo")}
             </Button>
           </div>
         </Card>
@@ -269,7 +270,7 @@ export default function CombosPage() {
         isOpen={!!confirmState}
         onClose={() => setConfirmState(null)}
         onConfirm={confirmState?.onConfirm}
-        title={confirmState?.title || "Confirm"}
+        title={confirmState?.title || translate("Confirm")}
         message={confirmState?.message}
         variant="danger"
       />
@@ -278,9 +279,28 @@ export default function CombosPage() {
 }
 
 const STRATEGY_OPTIONS = [
-  { value: "fallback", label: "Fallback — try in order" },
-  { value: "round-robin", label: "Round Robin — rotate" },
-  { value: "fusion", label: "Fusion — panel + judge" },
+  { value: "fallback", label: translate("Fallback — try in order") },
+  { value: "round-robin", label: translate("Round Robin — rotate") },
+  { value: "fusion", label: translate("Fusion — panel + judge") },
+];
+
+// F-RT: Fusion panel role options — one role per panel slot.
+// Roles guide each panel model's persona during Fusion synthesis.
+const PANEL_ROLE_OPTIONS = [
+  { value: "researcher", label: translate("role.researcher") },
+  { value: "coder", label: translate("role.coder") },
+  { value: "reviewer", label: translate("role.reviewer") },
+  { value: "summarizer", label: translate("role.summarizer") },
+  { value: "creative-writer", label: translate("role.creative-writer") },
+  { value: "devils-advocate", label: translate("role.devils-advocate") },
+  { value: "analyst", label: translate("role.analyst") },
+];
+
+// F-RT: Judge role variants — controls how the judge synthesizes panel answers.
+const JUDGE_ROLE_OPTIONS = [
+  { value: "judge-strict", label: translate("role.judge-strict") },
+  { value: "judge-synthesizer", label: translate("role.judge-synthesizer") },
+  { value: "judge-code", label: translate("role.judge-code") },
 ];
 
 function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
@@ -288,6 +308,24 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
   const isFusion = current === "fusion";
+
+  // F-RT: Fusion role tuning — panel roles + judge role variant
+  const fusionTuning = strategy.fusionTuning || {};
+  const panelRoles = Array.isArray(fusionTuning.roles) ? fusionTuning.roles : [];
+  const judgeRole = fusionTuning.judgeRole || "";
+
+  // F-RT: Patch fusionTuning while preserving existing fields
+  const handleSetFusionTuning = (patch) => {
+    onSetStrategy({ fusionTuning: { ...fusionTuning, ...patch } });
+  };
+
+  // F-RT: Update a single panel slot's role (index aligned with combo.models)
+  const handleSetPanelRole = (index, role) => {
+    const next = [...panelRoles];
+    while (next.length < combo.models.length) next.push("");
+    next[index] = role;
+    handleSetFusionTuning({ roles: next });
+  };
 
   return (
     <Card padding="sm" className="group">
@@ -315,26 +353,68 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
             </div>
             {/* Fusion: judge picker (Auto = first model) */}
             {isFusion && (
-              <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
-                <span className="text-[11px] font-medium text-text-muted">Judge</span>
-                <button
-                  onClick={() => setShowJudgeSelect(true)}
-                  className="inline-flex max-w-full items-center gap-1 rounded border border-dashed border-primary/40 px-1.5 py-0.5 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/5 transition-colors"
-                  title="Pick the model that fuses panel answers"
-                >
-                  <span className="material-symbols-outlined text-[13px]">gavel</span>
-                  <span className="truncate">{judge || `Auto — ${combo.models[0] || "first model"}`}</span>
-                </button>
-                {judge && (
+              <>
+                <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-medium text-text-muted">{translate("Judge")}</span>
                   <button
-                    onClick={() => onSetStrategy({ judgeModel: "" })}
-                    className="p-0.5 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
-                    title="Reset judge to Auto"
+                    onClick={() => setShowJudgeSelect(true)}
+                    className="inline-flex max-w-full items-center gap-1 rounded border border-dashed border-primary/40 px-1.5 py-0.5 font-mono text-[11px] text-primary hover:border-primary hover:bg-primary/5 transition-colors"
+                    title="Pick the model that fuses panel answers"
                   >
-                    <span className="material-symbols-outlined text-[13px]">close</span>
+                    <span className="material-symbols-outlined text-[13px]">gavel</span>
+                    <span className="truncate">{judge || translate("combos.autoMode", { model: combo.models[0] || translate("combos.firstModel") })}</span>
                   </button>
+                  {judge && (
+                    <button
+                      onClick={() => onSetStrategy({ judgeModel: "" })}
+                      className="p-0.5 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors"
+                      title={translate("Reset judge to Auto")}
+                    >
+                      <span className="material-symbols-outlined text-[13px]">close</span>
+                    </button>
+                  )}
+                  {/* F-RT: Judge Role variant picker */}
+                  <span className="text-[11px] font-medium text-text-muted ml-1">{translate("combos.judgeRole")}</span>
+                  <select
+                    value={judgeRole}
+                    onChange={(e) => handleSetFusionTuning({ judgeRole: e.target.value })}
+                    className="text-[11px] py-0.5 px-1.5 rounded border border-black/10 dark:border-white/10 bg-surface-2 text-text-main focus:outline-none focus:ring-1 focus:ring-primary/30"
+                    title={translate("combos.judgeRoleHint")}
+                  >
+                    <option value="">{translate("role.default")}</option>
+                    {JUDGE_ROLE_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                </div>
+                {/* F-RT: Panel role pickers — one per model slot */}
+                {combo.models.length > 0 && (
+                  <div className="mt-2 flex flex-col gap-1">
+                    <span className="text-[11px] font-medium text-text-muted">{translate("combos.panelRoles")}</span>
+                    <div className="flex flex-col gap-0.5">
+                      {combo.models.map((model, index) => (
+                        <div key={index} className="flex min-w-0 items-center gap-1.5">
+                          <code className="inline-flex min-w-0 flex-1 items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-[11px] text-text-muted dark:bg-white/5">
+                            <span className="text-[9px] text-text-muted/60 shrink-0">{index + 1}</span>
+                            <span className="truncate">{typeof model === "string" ? model : (model?.primary || "")}</span>
+                          </code>
+                          <select
+                            value={panelRoles[index] || ""}
+                            onChange={(e) => handleSetPanelRole(index, e.target.value)}
+                            className="text-[11px] py-0.5 px-1.5 rounded border border-black/10 dark:border-white/10 bg-surface-2 text-text-main focus:outline-none focus:ring-1 focus:ring-primary/30 shrink-0 max-w-[55%]"
+                            title={translate("combos.panelRoleHint")}
+                          >
+                            <option value="">{translate("role.default")}</option>
+                            {PANEL_ROLE_OPTIONS.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 )}
-              </div>
+              </>
             )}
           </div>
         </div>
@@ -355,28 +435,28 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
             <button
               onClick={(e) => { e.stopPropagation(); onCopy(combo.name, `combo-${combo.id}`); }}
               className="flex flex-col items-center rounded px-2 py-1 text-text-muted transition-colors hover:bg-black/5 hover:text-primary dark:hover:bg-white/5"
-              title="Copy combo name"
+              title={translate("Copy combo name")}
             >
               <span className="material-symbols-outlined text-[18px]">
                 {copied === `combo-${combo.id}` ? "check" : "content_copy"}
               </span>
-              <span className="text-[10px] leading-tight">Copy</span>
+              <span className="text-[10px] leading-tight">{translate("Copy")}</span>
             </button>
             <button
               onClick={onEdit}
               className="flex flex-col items-center rounded px-2 py-1 text-text-muted transition-colors hover:bg-black/5 hover:text-primary dark:hover:bg-white/5"
-              title="Edit"
+              title={translate("Edit")}
             >
               <span className="material-symbols-outlined text-[18px]">edit</span>
-              <span className="text-[10px] leading-tight">Edit</span>
+              <span className="text-[10px] leading-tight">{translate("Edit")}</span>
             </button>
             <button
               onClick={onDelete}
               className="flex flex-col items-center rounded px-2 py-1 text-red-500 transition-colors hover:bg-red-500/10"
-              title="Delete"
+              title={translate("Delete")}
             >
               <span className="material-symbols-outlined text-[18px]">delete</span>
-              <span className="text-[10px] leading-tight">Delete</span>
+              <span className="text-[10px] leading-tight">{translate("Delete")}</span>
             </button>
           </div>
         </div>
@@ -388,7 +468,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
         onClose={() => setShowJudgeSelect(false)}
         onSelect={(m) => { onSetStrategy({ judgeModel: m?.value || "" }); setShowJudgeSelect(false); }}
         activeProviders={activeProviders}
-        title="Select Judge Model"
+        title={translate("Select Judge Model")}
         addedModelValues={judge ? [judge] : []}
         closeOnSelect={true}
       />
@@ -456,7 +536,7 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
         <div
           className="min-w-0 flex-1 cursor-text truncate rounded px-1.5 py-0.5 font-mono text-xs text-text-main hover:bg-black/5 dark:hover:bg-white/5"
           onClick={() => setEditing(true)}
-          title="Click to edit"
+          title={translate("Click to edit")}
         >
           {model}
         </div>
@@ -468,7 +548,7 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
           onClick={onMoveUp}
           disabled={isFirst}
           className={`p-0.5 rounded ${isFirst ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
-          title="Move up"
+          title={translate("Move up")}
         >
           <span className="material-symbols-outlined text-[12px]">arrow_upward</span>
         </button>
@@ -476,7 +556,7 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
           onClick={onMoveDown}
           disabled={isLast}
           className={`p-0.5 rounded ${isLast ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
-          title="Move down"
+          title={translate("Move down")}
         >
           <span className="material-symbols-outlined text-[12px]">arrow_downward</span>
         </button>
@@ -528,11 +608,11 @@ function PanelSlot({ index, slot, isFirst, isLast, onPickPrimary, onPickBackup, 
           type="button"
           onClick={onPickPrimary}
           className="min-w-0 flex items-center gap-1 rounded border border-dashed border-primary/40 px-1.5 py-0.5 font-mono text-xs text-primary hover:border-primary hover:bg-primary/5 transition-colors text-left"
-          title="Pick primary model"
+          title={translate("Pick primary model")}
         >
           <span className="material-symbols-outlined text-[12px] shrink-0">star</span>
           <span className="text-[9px] uppercase tracking-wide opacity-70 shrink-0">P</span>
-          <span className="truncate flex-1">{slot?.primary || "Pick primary"}</span>
+          <span className="truncate flex-1">{slot?.primary || translate("Pick primary")}</span>
         </button>
 
         {/* Backup row — differs based on whether a backup is set */}
@@ -552,7 +632,7 @@ function PanelSlot({ index, slot, isFirst, isLast, onPickPrimary, onPickBackup, 
               type="button"
               onClick={onClearBackup}
               className="p-0.5 rounded text-text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors shrink-0"
-              title="Clear backup"
+              title={translate("Clear backup")}
             >
               <span className="material-symbols-outlined text-[12px]">close</span>
             </button>
@@ -562,11 +642,11 @@ function PanelSlot({ index, slot, isFirst, isLast, onPickPrimary, onPickBackup, 
             type="button"
             onClick={onPickBackup}
             className="min-w-0 flex items-center gap-1 rounded border border-dashed border-black/10 dark:border-white/10 px-1.5 py-0.5 font-mono text-xs text-text-muted hover:border-text-muted/50 hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors text-left"
-            title="Pick backup model (optional)"
+            title={translate("Pick backup model (optional)")}
           >
             <span className="material-symbols-outlined text-[12px] shrink-0 opacity-50">shield</span>
             <span className="text-[9px] uppercase tracking-wide opacity-50 shrink-0">B</span>
-            <span className="truncate">Add backup (optional)</span>
+            <span className="truncate">{translate("Add backup (optional)")}</span>
           </button>
         )}
       </div>
@@ -578,7 +658,7 @@ function PanelSlot({ index, slot, isFirst, isLast, onPickPrimary, onPickBackup, 
           onClick={onMoveUp}
           disabled={isFirst}
           className={`p-0.5 rounded ${isFirst ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
-          title="Move up"
+          title={translate("Move up")}
         >
           <span className="material-symbols-outlined text-[12px]">arrow_upward</span>
         </button>
@@ -587,7 +667,7 @@ function PanelSlot({ index, slot, isFirst, isLast, onPickPrimary, onPickBackup, 
           onClick={onMoveDown}
           disabled={isLast}
           className={`p-0.5 rounded ${isLast ? "text-text-muted/20 cursor-not-allowed" : "text-text-muted hover:text-primary hover:bg-black/5 dark:hover:bg-white/5"}`}
-          title="Move down"
+          title={translate("Move down")}
         >
           <span className="material-symbols-outlined text-[12px]">arrow_downward</span>
         </button>
@@ -596,7 +676,7 @@ function PanelSlot({ index, slot, isFirst, isLast, onPickPrimary, onPickBackup, 
         type="button"
         onClick={onRemove}
         className="p-0.5 hover:bg-red-500/10 rounded text-text-muted hover:text-red-500 transition-all shrink-0 mt-1"
-        title="Remove slot"
+        title={translate("Remove slot")}
       >
         <span className="material-symbols-outlined text-[12px]">close</span>
       </button>
@@ -669,11 +749,11 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
 
   const validateName = (value) => {
     if (!value.trim()) {
-      setNameError("Name is required");
+      setNameError(translate("Name is required"));
       return false;
     }
     if (!VALID_NAME_REGEX.test(value)) {
-      setNameError("Only letters, numbers, -, _ and . allowed");
+      setNameError(translate("Only letters, numbers, -, _ and . allowed"));
       return false;
     }
     setNameError("");
@@ -766,7 +846,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
       // ON -> OFF: warn if any backup is set (will be dropped when serializing to string[])
       const hasBackups = panelSlots.some((s) => s && s.backup);
       if (hasBackups && typeof window !== "undefined" &&
-          !window.confirm("Disabling failover will drop all backup models. Continue?")) {
+          !window.confirm(translate("combos.confirmDisableFailover"))) {
         return; // user cancelled — keep failover ON
       }
       setModels(toStringArray(panelSlots));
@@ -848,23 +928,23 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
           {/* Name */}
           <div>
             <Input
-              label="Combo Name"
+              label={translate("Combo Name")}
               value={name}
               onChange={handleNameChange}
               placeholder="my-combo"
               error={nameError}
             />
             <p className="text-[10px] text-text-muted mt-0.5">
-              Only letters, numbers, -, _ and . allowed
+              {translate("Only letters, numbers, -, _ and . allowed")}
             </p>
           </div>
 
           {/* F1: Enable primary/backup failover toggle */}
           <div className="flex items-start sm:items-center justify-between gap-4 p-3 rounded-lg bg-bg border border-border">
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-sm sm:text-base">Enable primary/backup failover</p>
+              <p className="font-medium text-sm sm:text-base">{translate("Enable primary/backup failover")}</p>
               <p className="text-xs sm:text-sm text-text-muted">
-                When ON, each Fusion panel slot shows a primary + backup model. Backup takes over if primary fails.
+                {translate("When ON, each Fusion panel slot shows a primary + backup model. Backup takes over if primary fails.")}
               </p>
             </div>
             <Toggle
@@ -876,7 +956,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
           {/* Models / Panel Slots */}
           <div>
             <label className="text-sm font-medium mb-1.5 block">
-              {failoverEnabled ? "Panel Slots" : "Models"}
+              {failoverEnabled ? translate("Panel Slots") : translate("Models")}
             </label>
 
             {failoverEnabled ? (
@@ -884,7 +964,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               slotsList.length === 0 ? (
                 <div className="text-center py-4 border border-dashed border-black/10 dark:border-white/10 rounded-lg bg-black/[0.01] dark:bg-white/[0.01]">
                   <span className="material-symbols-outlined text-text-muted text-xl mb-1">layers</span>
-                  <p className="text-xs text-text-muted">No panel slots added yet</p>
+                  <p className="text-xs text-text-muted">{translate("No panel slots added yet")}</p>
                 </div>
               ) : (
                 <div className="flex max-h-[55vh] min-w-0 flex-col gap-1.5 overflow-y-auto sm:max-h-[350px]">
@@ -920,7 +1000,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               slotsEmpty ? (
                 <div className="text-center py-4 border border-dashed border-black/10 dark:border-white/10 rounded-lg bg-black/[0.01] dark:bg-white/[0.01]">
                   <span className="material-symbols-outlined text-text-muted text-xl mb-1">layers</span>
-                  <p className="text-xs text-text-muted">No models added yet</p>
+                  <p className="text-xs text-text-muted">{translate("No models added yet")}</p>
                 </div>
               ) : (
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd} modifiers={[restrictToVerticalAxis, restrictToParentElement]}>
@@ -959,14 +1039,14 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               className="w-full mt-2 py-2 border border-dashed border-black/10 dark:border-white/10 rounded-lg text-xs text-primary font-medium hover:text-primary hover:border-primary/50 transition-colors flex items-center justify-center gap-1"
             >
               <span className="material-symbols-outlined text-[16px]">add</span>
-              {failoverEnabled ? "Add Panel Slot" : "Add Model"}
+              {failoverEnabled ? translate("Add Panel Slot") : translate("Add Model")}
             </button>
           </div>
 
           {/* Actions */}
           <div className="flex flex-col gap-2 pt-1 sm:flex-row">
             <Button onClick={onClose} variant="ghost" fullWidth size="sm">
-              Cancel
+              {translate("Cancel")}
             </Button>
             <Button
               onClick={handleSave}
@@ -974,7 +1054,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
               size="sm"
               disabled={!name.trim() || !!nameError || saving}
             >
-              {saving ? "Saving..." : isEdit ? "Save" : "Create"}
+              {saving ? translate("Saving...") : isEdit ? translate("Save") : translate("Create")}
             </Button>
           </div>
         </div>
@@ -988,7 +1068,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         onDeselect={handleModelDeselect}
         activeProviders={activeProviders}
         modelAliases={modelAliases}
-        title={pickTarget ? `Pick ${pickTarget.field} model (slot ${pickTarget.slotIndex + 1})` : "Add Model to Combo"}
+        title={pickTarget ? translate("combos.pickModel", { field: pickTarget.field, slot: pickTarget.slotIndex + 1 }) : translate("Add Model to Combo")}
         kindFilter={kindFilter}
         addedModelValues={addedModelValues}
         closeOnSelect={failoverEnabled && !!pickTarget}

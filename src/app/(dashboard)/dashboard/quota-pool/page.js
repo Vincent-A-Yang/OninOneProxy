@@ -17,7 +17,7 @@ import { translate } from "@/i18n/runtime";
  *   - Cooling sources list with live countdown
  *
  * The pool is process-local in-memory state, so this page reflects the
- * currently running 9Router instance. Refresh polls /api/quota-pool.
+ * currently running OninOneProxy instance. Refresh polls /api/quota-pool.
  *
  * Operators enable the pool in Settings (quotaPoolEnabled). When disabled,
  * the page shows an empty state with a hint.
@@ -34,6 +34,7 @@ export default function QuotaPoolPage() {
   const [validatorStatsError, setValidatorStatsError] = useState(false);
   const [_, forceTick] = useState(0); // re-render for live countdowns
   const pollRef = useRef(null);
+  const [enabling, setEnabling] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -72,6 +73,24 @@ export default function QuotaPoolPage() {
     }
   }, []);
 
+  // 一键启用配额池：调用 /api/settings 更新 quotaPoolEnabled 为 true
+  const handleEnable = useCallback(async () => {
+    setEnabling(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quotaPoolEnabled: true }),
+      });
+      if (!res.ok) throw new Error("启用失败");
+      await fetchData();
+    } catch (e) {
+      setError(e.message || "启用失败");
+    } finally {
+      setEnabling(false);
+    }
+  }, [fetchData]);
+
   useEffect(() => {
     fetchData();
     fetchValidatorStats();
@@ -109,20 +128,20 @@ export default function QuotaPoolPage() {
         <div className="min-w-0">
           <h1 className="text-lg font-semibold flex items-center gap-2">
             <span className="material-symbols-outlined text-primary">balance</span>
-            Quota & Rate Pool
+            配额与速率池
             {enabled ? (
               <span className="inline-block rounded bg-success/15 px-1.5 py-0.5 text-[10px] font-medium text-success">
-                Enabled
+                已启用
               </span>
             ) : (
               <span className="inline-block rounded bg-black/10 px-1.5 py-0.5 text-[10px] font-medium text-text-muted dark:bg-white/10">
-                Disabled
+                未启用
               </span>
             )}
             {errEnabled && (
-              <Tooltip text="Smart Errors: F5 auto-identifies error codes returned by providers, intelligently judging cooldown duration to avoid avalanche caused by simple retries.">
+              <Tooltip text="智能错误处理：F5 自动识别提供商返回的错误码，智能判断冷却时长，避免简单重试引发雪崩。">
                 <span className="inline-block rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                  Smart Errors
+                  智能错误处理
                 </span>
               </Tooltip>
             )}
@@ -133,15 +152,15 @@ export default function QuotaPoolPage() {
                 loading (or has errored) we render no badge instead of a
                 misleading "Disabled" flicker. */}
             {validatorLoaded && (
-              <Tooltip text="Fake Response Detection: Validator (non-streaming) + Stream Quality Guard (streaming) automatically detect empty / templated / malformed / looping responses and cool down the offending source so the next request switches to a healthy one.">
+              <Tooltip text="伪响应检测：验证器（非流式）+ 流质量守护（流式）自动检测空响应/模板响应/格式异常/循环输出，冷却问题来源，使下一次请求切换到健康来源。">
                 <span className="inline-block rounded bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
-                  {translate("Fake Detection")}
+                  伪响应检测
                 </span>
               </Tooltip>
             )}
             {validatorLoaded && (
               <span className="inline-flex items-center gap-1">
-                <Tooltip text="Response Validator: non-streaming path. Detects empty / templated / malformed / format-broken bodies returned by upstream providers.">
+                <Tooltip text="响应验证器：非流式路径。检测上游提供商返回的空响应/模板响应/格式异常/格式损坏的响应体。">
                   <span
                     className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
                       validatorEnabled
@@ -149,10 +168,10 @@ export default function QuotaPoolPage() {
                         : "bg-black/10 text-text-muted dark:bg-white/10"
                     }`}
                   >
-                    {translate("Validator")}
+                    验证器
                   </span>
                 </Tooltip>
-                <Tooltip text="Stream Quality Guard: streaming path. Detects output loops, stream interruptions, invalid token accumulation, and duplicate responses in real time.">
+                <Tooltip text="流质量守护：流式路径。实时检测输出循环、流中断、无效 Token 累积和重复响应。">
                   <span
                     className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${
                       streamGuardEnabled
@@ -160,16 +179,16 @@ export default function QuotaPoolPage() {
                         : "bg-black/10 text-text-muted dark:bg-white/10"
                     }`}
                   >
-                    {translate("Guard")}
+                    流守护
                   </span>
                 </Tooltip>
               </span>
             )}
           </h1>
           <p className="text-sm text-text-muted mt-1">
-            Aggregates same-model + combo sources into one logical pool. Enable{" "}
-            <code className="font-mono text-xs">quotaPoolEnabled</code> in{" "}
-            <code className="font-mono text-xs">Settings</code> to start tracking.
+            将同模型 + 组合来源聚合为一个逻辑池。在{" "}
+            <code className="font-mono text-xs">设置</code>{" "}
+            中启用 <code className="font-mono text-xs">quotaPoolEnabled</code> 开始追踪。
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -180,14 +199,14 @@ export default function QuotaPoolPage() {
             onClick={fetchData}
             disabled={loading}
           >
-            Refresh
+            刷新
           </Button>
         </div>
       </div>
 
       {error && (
         <Card>
-          <div className="text-sm text-red-500">Error: {error}</div>
+          <div className="text-sm text-red-500">错误：{error}</div>
         </Card>
       )}
 
@@ -198,12 +217,19 @@ export default function QuotaPoolPage() {
             <span className="material-symbols-outlined text-text-muted text-[40px]">
               power_off
             </span>
-            <h2 className="text-sm font-semibold">Quota pool is not enabled</h2>
+            <h2 className="text-sm font-semibold">配额池未启用</h2>
             <p className="max-w-md text-xs text-text-muted">
-              Turn on <code className="font-mono">quotaPoolEnabled</code> in
-              Settings to start aggregating per-source RPM/TPM and cooling
-              unavailable sources automatically.
+              启用后将自动聚合每个来源的 RPM/TPM，并在来源不可用时自动冷却切换。
             </p>
+            <Button
+              variant="primary"
+              size="sm"
+              icon="bolt"
+              onClick={handleEnable}
+              loading={enabling}
+            >
+              一键启用
+            </Button>
           </div>
         </Card>
       )}
@@ -214,8 +240,8 @@ export default function QuotaPoolPage() {
           <StatCard
             label={
               <span className="flex items-center gap-1">
-                Logical Models
-                <Tooltip text="Logical Models: Different providers or APIKEYs of the same model + Combo combinations, treated as one unified model with aggregated quota and rate." />
+                逻辑模型
+                <Tooltip text="逻辑模型：不同提供商或 APIKEY 的相同模型 + Combo 组合，视为一个统一模型，额度速率叠加。" />
               </span>
             }
             value={summary?.logicalModelCount ?? 0}
@@ -225,8 +251,8 @@ export default function QuotaPoolPage() {
           <StatCard
             label={
               <span className="flex items-center gap-1">
-                Total Sources
-                <Tooltip text="Total Sources: All available API accounts under the logical model, each independently calculating rate and quota." />
+                总来源
+                <Tooltip text="总来源：逻辑模型下所有可用 API 账号，每个独立计算速率和额度。" />
               </span>
             }
             value={summary?.totalSources ?? 0}
@@ -236,8 +262,8 @@ export default function QuotaPoolPage() {
           <StatCard
             label={
               <span className="flex items-center gap-1">
-                Available
-                <Tooltip text="Available: Source count not cooling, not over-limit, ready to receive requests immediately." />
+                可用
+                <Tooltip text="可用：未冷却、未超限、立即可接收请求的来源数量。" />
               </span>
             }
             value={summary?.totalAvailable ?? 0}
@@ -248,8 +274,8 @@ export default function QuotaPoolPage() {
           <StatCard
             label={
               <span className="flex items-center gap-1">
-                Cooling
-                <Tooltip text="Cooling: Sources temporarily disabled due to rate over-limit, quota exhaustion, or high error rate. Auto-recovers after cooldown." />
+                冷却中
+                <Tooltip text="冷却中：因速率超限、额度耗尽或错误率过高被临时禁用的来源，冷却时间结束后自动恢复。" />
               </span>
             }
             value={summary?.totalCooling ?? 0}
@@ -272,16 +298,16 @@ export default function QuotaPoolPage() {
             <span className="material-symbols-outlined text-primary text-[18px]">
               shield
             </span>
-            {translate("Fake Response Detection")}
-            <Tooltip text="Fake Response Detection: 24h rolling window. The validator (non-streaming) and stream quality guard (streaming) detect empty / templated / malformed / looping responses, cool down the offending source, and switch to a healthy one. Stats reset on restart (in-memory)." />
+            伪响应检测
+            <Tooltip text="伪响应检测：24h 滚动窗口。验证器（非流式）和流质量守护（流式）检测空响应/模板响应/格式异常/循环输出，冷却问题来源并切换到健康来源。统计在重启时重置（内存中）。" />
           </h2>
           <span className="text-[10px] uppercase tracking-wide text-text-muted">
-            {translate("24h")}
+            24小时
           </span>
         </div>
         {validatorStatsError ? (
           <div className="py-4 text-center text-xs text-text-muted">
-            {translate("No data — stats endpoint unavailable")}
+            无数据 — 统计端点不可用
           </div>
         ) : !validatorLoaded ? (
           <div className="py-4 text-center text-xs text-text-muted">…</div>
@@ -290,8 +316,8 @@ export default function QuotaPoolPage() {
             <StatCard
               label={
                 <span className="flex items-center gap-1">
-                  {translate("Detection Count")}
-                  <Tooltip text="Detection Count: Total fake/empty/malformed responses detected in the last 24h. Includes both hard rejects (error) and soft warns (warn). Resets on restart." />
+                  检测次数
+                  <Tooltip text="检测次数：过去 24h 内检测到的假响应/空响应/格式异常响应总数。包含硬拒绝（error）和软警告（warn）。重启后重置。" />
                 </span>
               }
               value={validatorStats?.detectionCount ?? 0}
@@ -306,8 +332,8 @@ export default function QuotaPoolPage() {
             <StatCard
               label={
                 <span className="flex items-center gap-1">
-                  {translate("Source Switches")}
-                  <Tooltip text="Source Switches: Times the dispatcher excluded a connection and retried on a different source because the previous one returned a fake response. Resets on restart." />
+                  来源切换次数
+                  <Tooltip text="来源切换次数：因前一个来源返回假响应，调度器排除该连接并在不同来源上重试的次数。重启后重置。" />
                 </span>
               }
               value={validatorStats?.sourceSwitchCount ?? 0}
@@ -322,8 +348,8 @@ export default function QuotaPoolPage() {
             <StatCard
               label={
                 <span className="flex items-center gap-1">
-                  {translate("Cooled Sources")}
-                  <Tooltip text="Cooled Sources: Unique source IDs cooled down by the fake-response detector in the last 24h. A source cooling once counts as one; multiple cools of the same source still count as one." />
+                  冷却来源数
+                  <Tooltip text="冷却来源数：过去 24h 内被假响应检测器冷却的唯一来源 ID 数。一个来源冷却一次计为一个；同一来源多次冷却仍计为一个。" />
                 </span>
               }
               value={validatorStats?.uniqueCooldownSources ?? 0}
@@ -344,7 +370,7 @@ export default function QuotaPoolPage() {
           (validatorStats?.detectionCount ?? 0) > 0 && (
             <div className="mt-3 border-t border-border pt-3">
               <div className="mb-2 text-[11px] uppercase tracking-wide text-text-muted">
-                {translate("By Reason")}
+                按原因分类
               </div>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(validatorStats?.detectionsByReason || {})
@@ -376,7 +402,7 @@ export default function QuotaPoolPage() {
       {enabled && cooldownSources.length > 0 && (
         <Card>
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Cooling Sources</h2>
+            <h2 className="text-sm font-semibold">冷却来源</h2>
             <span className="material-symbols-outlined text-text-muted text-[16px]">
               ac_unit
             </span>
@@ -396,10 +422,9 @@ export default function QuotaPoolPage() {
             <span className="material-symbols-outlined text-text-muted text-[40px]">
               inbox
             </span>
-            <h2 className="text-sm font-semibold">No sources registered yet</h2>
+            <h2 className="text-sm font-semibold">尚未注册任何来源</h2>
             <p className="max-w-md text-xs text-text-muted">
-              Sources are registered on the first request after the feature is
-              enabled. Send a chat request and refresh this page.
+              来源在功能启用后首次请求时注册。发送一次聊天请求后刷新本页。
             </p>
           </div>
         </Card>
@@ -429,20 +454,20 @@ function LogicalModelCard({ lm }) {
             {lm.logicalId}
           </h3>
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-muted">
-            <span>{lm.sourceCount} sources</span>
-            <span className="text-success">{lm.availableCount} available</span>
+            <span>{lm.sourceCount} 个来源</span>
+            <span className="text-success">{lm.availableCount} 可用</span>
             {lm.coolingCount > 0 && (
-              <span className="text-amber-500">{lm.coolingCount} cooling</span>
+              <span className="text-amber-500">{lm.coolingCount} 冷却中</span>
             )}
             {earliestMs > 0 && (
-              <span>earliest cooldown ends in {formatCountdown(earliestMs)}</span>
+              <span>最早冷却结束于 {formatCountdown(earliestMs)}</span>
             )}
           </div>
         </div>
         <div className="flex items-center gap-4 text-xs">
-          <Metric label="Total RPM" value={totalRpmLimit.toLocaleString()} />
+          <Metric label="总 RPM" value={totalRpmLimit.toLocaleString()} />
           <Metric
-            label="Total Quota"
+            label="总额度"
             value={formatTpm(totalTpmLimit)}
           />
           <span className="material-symbols-outlined text-text-muted text-[18px]">
@@ -456,29 +481,29 @@ function LogicalModelCard({ lm }) {
         <div className="mt-3 overflow-x-auto border-t border-border pt-3">
           {lm.sources.length === 0 ? (
             <div className="py-3 text-center text-xs text-text-muted">
-              No physical sources registered.
+              尚无物理来源注册。
             </div>
           ) : (
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-left text-text-muted">
-                  <th className="py-1.5 pr-2 font-medium">Provider</th>
-                  <th className="py-1.5 pr-2 font-medium">Model</th>
+                  <th className="py-1.5 pr-2 font-medium">提供商</th>
+                  <th className="py-1.5 pr-2 font-medium">模型</th>
                   <th className="py-1.5 pr-2 font-medium">Key</th>
                   <th className="py-1.5 pr-2 text-right font-medium">
-                    <Tooltip text="RPM Limit: Source's maximum requests per minute. Auto-cools when exceeded.">
-                      <span>RPM Limit</span>
+                    <Tooltip text="RPM 限额：来源每分钟最大请求数。超出时自动冷却。">
+                      <span>RPM 限额</span>
                     </Tooltip>
                   </th>
-                  <th className="py-1.5 pr-2 text-right font-medium">Current RPM</th>
+                  <th className="py-1.5 pr-2 text-right font-medium">当前 RPM</th>
                   <th className="py-1.5 pr-2 text-right font-medium">
-                    <Tooltip text="Remaining: Remaining capacity ratio (requests or tokens) within the current window.">
-                      <span>Remaining</span>
+                    <Tooltip text="剩余：当前窗口内剩余容量比例（请求数或 Token 数）。">
+                      <span>剩余</span>
                     </Tooltip>
                   </th>
-                  <th className="py-1.5 pr-2 text-right font-medium">Total Tokens</th>
-                  <th className="py-1.5 pr-2 text-right font-medium">Success/Fail</th>
-                  <th className="py-1.5 font-medium">Status</th>
+                  <th className="py-1.5 pr-2 text-right font-medium">总 Token</th>
+                  <th className="py-1.5 pr-2 text-right font-medium">成功/失败</th>
+                  <th className="py-1.5 font-medium">状态</th>
                 </tr>
               </thead>
               <tbody>
@@ -536,7 +561,7 @@ function SourceStatusBadge({ source }) {
     return (
       <span className="inline-flex items-center gap-1 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 dark:text-amber-400">
         <span className="material-symbols-outlined text-[12px]">ac_unit</span>
-        Cooling · {formatCountdown(source.cooldownUntilMs)}
+        冷却中 · {formatCountdown(source.cooldownUntilMs)}
       </span>
     );
   }
@@ -545,14 +570,14 @@ function SourceStatusBadge({ source }) {
     return (
       <span className="inline-flex items-center gap-1 rounded bg-red-500/15 px-1.5 py-0.5 text-[10px] font-medium text-red-500">
         <span className="material-symbols-outlined text-[12px]">warning</span>
-        Low Quota
+        额度不足
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1 rounded bg-success/15 px-1.5 py-0.5 text-[10px] font-medium text-success">
       <span className="material-symbols-outlined text-[12px]">check_circle</span>
-      Normal
+      正常
     </span>
   );
 }
@@ -571,7 +596,7 @@ function CoolingRow({ cs }) {
       </div>
       <div className="flex items-center gap-3">
         <span className="text-amber-600 dark:text-amber-400">
-          ends in {formatCountdown(cs.cooldownUntilMs)}
+          剩余 {formatCountdown(cs.cooldownUntilMs)}
         </span>
         {cs.cooldownReason && (
           <span className="text-text-muted italic">— {cs.cooldownReason}</span>

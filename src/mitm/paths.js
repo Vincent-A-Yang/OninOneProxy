@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 
-const APP_NAME = "9router";
+const APP_NAME = "oninoneproxy";
 
 function defaultDir() {
   if (process.platform === "win32") {

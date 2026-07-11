@@ -63,9 +63,30 @@ export async function GET() {
     // Hide sensitive fields, enrich name for compatible providers
     const safeConnections = connections.map(c => {
       const isCompatible = isOpenAICompatibleProvider(c.provider) || isAnthropicCompatibleProvider(c.provider);
-      const name = isCompatible
-        ? (c.name || nodeNameMap[c.provider] || c.providerSpecificData?.nodeName || c.provider)
-        : c.name;
+      let name;
+      if (isCompatible) {
+        // Fallback chain: c.name → nodeNameMap → providerSpecificData.nodeName → friendly name from provider ID
+        name = c.name || nodeNameMap[c.provider] || c.providerSpecificData?.nodeName;
+        if (!name) {
+          // Generate a friendly name from the provider ID for openai-compatible-* prefix
+          if (c.provider && c.provider.startsWith("openai-compatible-")) {
+            const rest = c.provider.slice("openai-compatible-".length);
+            if (rest.startsWith("chat-")) {
+              name = "OpenAI Compatible (Chat)";
+            } else if (rest.startsWith("responses-")) {
+              name = "OpenAI Compatible (Responses)";
+            } else {
+              name = "OpenAI Compatible";
+            }
+          } else if (c.provider && c.provider.startsWith("anthropic-compatible-")) {
+            name = "Anthropic Compatible";
+          } else {
+            name = "未命名提供商";
+          }
+        }
+      } else {
+        name = c.name || (c.provider ? "未命名提供商" : undefined);
+      }
       return {
         ...c,
         name,
@@ -170,6 +191,10 @@ export async function POST(request) {
         baseUrl: node.baseUrl,
         nodeName: node.name,
       };
+      // Snapshot node.name into the connection name so the UI can display it
+      // even if the node is later renamed or deleted. Only override when no
+      // explicit name was provided by the caller.
+      if (!connectionName) connectionName = node.name;
     } else if (isAnthropicCompatibleProvider(provider)) {
       const node = await getProviderNodeById(provider);
       if (!node) {
@@ -180,6 +205,7 @@ export async function POST(request) {
         baseUrl: node.baseUrl,
         nodeName: node.name,
       };
+      if (!connectionName) connectionName = node.name;
     } else if (isCustomEmbeddingProvider(provider)) {
       const node = await getProviderNodeById(provider);
       if (!node) {
@@ -190,6 +216,7 @@ export async function POST(request) {
         baseUrl: node.baseUrl,
         nodeName: node.name,
       };
+      if (!connectionName) connectionName = node.name;
     }
 
     const mergedProviderSpecificData = {

@@ -33,12 +33,23 @@ async function loadTranslations(locale) {
 }
 
 // Translate text - exported for use in components
-export function translate(text) {
+// Supports optional params object for {placeholder} substitution (backward compatible)
+export function translate(text, params) {
   if (!text || typeof text !== "string") return text;
   const trimmed = text.trim();
   if (!trimmed) return text;
-  if (currentLocale === "en") return text;
-  return translationMap[trimmed] || text;
+  let result;
+  if (currentLocale === "en") {
+    result = text;
+  } else {
+    result = translationMap[trimmed] || text;
+  }
+  if (params && typeof params === "object") {
+    for (const [key, value] of Object.entries(params)) {
+      result = result.replaceAll(`{${key}}`, String(value));
+    }
+  }
+  return result;
 }
 
 // Get current locale - exported for use in components

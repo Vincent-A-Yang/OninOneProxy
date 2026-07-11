@@ -53,7 +53,7 @@ const DEFAULT_SETTINGS = {
   // existing behavior (string[] models format) is fully preserved while {primary, backup}
   // object format gains failover transparently.
   fusionFailoverEnabled: true,
-  // F3: Response cache layer. Defaults off so existing 9Router behavior is
+  // F3: Response cache layer. Defaults off so existing OninOneProxy behavior is
   // preserved. Operators opt in via Dashboard settings panel.
   responseCacheEnabled: false,
   semanticCacheEnabled: false,
@@ -62,7 +62,7 @@ const DEFAULT_SETTINGS = {
   // Cache TTL in minutes. 0 = never expire. Default 60min matches typical
   // chat-completion freshness expectations.
   cacheTtlMinutes: 60,
-  // F2: sep-CMA-ES smart router. Defaults off so existing 9Router routing
+  // F2: sep-CMA-ES smart router. Defaults off so existing OninOneProxy routing
   // (capability-based reorder + combo fallback order) is fully preserved.
   // Operators opt in via Dashboard settings; when enabled, combo models are
   // reordered by learned weights before fallback dispatch.
@@ -74,18 +74,19 @@ const DEFAULT_SETTINGS = {
   // | "cost" | "successRate". "score" is the composite metric recommended
   // for general use.
   smartRouterTargetMetric: "score",
-  // F5: Unified quota / rate pool + intelligent error handling. Defaults off
-  // so existing 9Router routing (per-connection fallback) is preserved. When
-  // quotaPoolEnabled is true, chat.js consults the quota pool to select a
-  // physical source (provider/key/model) for the logical model. When
-  // smartErrorHandlingEnabled is true, upstream errors are run through
-  // errorAnalyzer to drive cool_down / switch_key / switch_model decisions.
-  quotaPoolEnabled: false,
+  // F5: Unified quota / rate pool + intelligent error handling. Defaults ON
+  // so operators get aggregated quota/rate tracking and smart error handling
+  // out of the box. When quotaPoolEnabled is true, chat.js consults the
+  // quota pool to select a physical source (provider/key/model) for the
+  // logical model. When smartErrorHandlingEnabled is true, upstream errors
+  // are run through errorAnalyzer to drive cool_down / switch_key /
+  // switch_model decisions.
+  quotaPoolEnabled: true,
   smartErrorHandlingEnabled: false,
-  // F6: Per-provider limits enforcement. Defaults off so existing 9Router
-  // behavior is preserved. When enabled, request counts / token usage are
-  // tracked per provider and capped according to configured limits.
-  providerLimitsEnabled: false,
+  // F6: Per-provider limits enforcement. Defaults ON so request counts /
+  // token usage are tracked per provider and capped according to configured
+  // limits.
+  providerLimitsEnabled: true,
   // F4: Custom fake-response patterns for responseValidator.
   // Stored as JSON array (see loadCustomPatterns in responseValidator.js):
   //   [{ id, pattern, caseInsensitive?, isRegex?, severity?, type? }]
@@ -115,7 +116,7 @@ const DEFAULT_SETTINGS = {
   // it to decide whether to emit verbose per-request logs.
   logRotationEnabled: true,
   // Stage 5.4: OAuth anti-ban runtime config. Defaults preserve existing
-  // 9Router behavior (master switch off → every guard short-circuits to
+  // OninOneProxy behavior (master switch off → every guard short-circuits to
   // permissive). Operators opt in via Dashboard settings panel to engage
   // the per-account concurrency cap, refresh jitter, 429/403 monitor, and
   // header spoof configurability. See `docs/oauth-anti-ban-guide.md` §3.4.

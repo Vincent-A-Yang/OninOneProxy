@@ -22,7 +22,7 @@ export default function MediaProviderDetailPage() {
   const isCustom = isCustomEmbeddingProvider(id) && kind === "embedding";
 
   const handleDeleteCustom = async () => {
-    if (!confirm("Delete this Custom Embedding node?")) return;
+    if (!confirm("确定删除此自定义 Embedding 节点？")) return;
     try {
       const res = await fetch(`/api/provider-nodes/${id}`, { method: "DELETE" });
       if (res.ok) router.push(`/dashboard/media-providers/${kind}`);
@@ -56,13 +56,13 @@ export default function MediaProviderDetailPage() {
 
   // For custom embedding nodes, build a synthetic provider object
   const provider = isCustom
-    ? (customNode ? { id, name: customNode.name || "Custom Embedding", color: "#6366F1", textIcon: "CE" } : null)
+    ? (customNode ? { id, name: customNode.name || "自定义 Embedding", color: "#6366F1", textIcon: "CE" } : null)
     : builtInProvider;
 
   if (!isCustom && !builtInProvider) return notFound();
   if (isCustom && !customLoading && !customNode) return notFound();
   if (isCustom && customLoading) {
-    return <div className="text-text-muted text-sm py-12 text-center">Loading...</div>;
+    return <div className="text-text-muted text-sm py-12 text-center">加载中...</div>;
   }
 
   const kinds = isCustom ? ["embedding"] : (provider.serviceKinds ?? ["llm"]);
@@ -103,12 +103,12 @@ export default function MediaProviderDetailPage() {
                   className="text-xs text-primary hover:underline inline-flex items-center gap-1"
                 >
                   <span className="material-symbols-outlined text-sm">open_in_new</span>
-                  Get API Key
+                  获取 API Key
                 </a>
               )}
             </div>
             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-              {isCustom && <Badge variant="default" size="sm">Custom · {customNode?.prefix}</Badge>}
+              {isCustom && <Badge variant="default" size="sm">自定义 · {customNode?.prefix}</Badge>}
               {kinds.map((k) => (
                 <Badge key={k} variant={k === kind ? "primary" : "default"} size="sm">
                   {k.toUpperCase()}
@@ -119,10 +119,10 @@ export default function MediaProviderDetailPage() {
           {isCustom && (
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
               <Button size="sm" variant="secondary" icon="edit" onClick={() => setShowEditModal(true)}>
-                Edit
+                编辑
               </Button>
               <Button size="sm" variant="secondary" icon="delete" onClick={handleDeleteCustom}>
-                Delete
+                删除
               </Button>
             </div>
           )}
@@ -182,7 +182,7 @@ export default function MediaProviderDetailPage() {
               : provider.searchConfig || { mode: "chat-completions", defaultModel: provider.searchViaChat?.defaultModel, pricingUrl: provider.searchViaChat?.pricingUrl, freeTier: provider.searchViaChat?.freeTier }
           }
           provider={provider}
-          title={`${kindConfig.label} Config`}
+          title={`${kindConfig.label} 配置`}
         />
       )}
 
