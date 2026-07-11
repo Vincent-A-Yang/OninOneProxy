@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -84,7 +84,13 @@ export default function CombosPage() {
       const settingsData = settingsRes.ok ? await settingsRes.json() : {};
       
       // Only LLM combos here - webSearch/webFetch combos belong to media-providers/web
-      if (combosRes.ok) setCombos((combosData.combos || []).filter(c => !c.kind || c.kind === "llm"));
+      if (combosRes.ok) {
+        setCombos(
+          (combosData.combos || [])
+            .filter(c => c && typeof c === "object" && (!c.kind || c.kind === "llm"))
+            .map(c => ({ ...c, models: Array.isArray(c.models) ? c.models : [] }))
+        );
+      }
       if (providersRes.ok) {
         setActiveProviders(providersData.connections || []);
       }
@@ -159,15 +165,22 @@ export default function CombosPage() {
     });
   };
 
-  // Merge a per-combo strategy patch into settings.comboStrategies. Passing an empty
-  // patch (strategy back to default "fallback") drops the entry entirely.
+  // Merge a per-combo strategy patch into settings.comboStrategies. Switching back to
+  // "fallback" preserves fusionTuning/judgeRole/judgeModel so users can restore config.
   const handleSetComboStrategy = async (comboName, patch) => {
     try {
       const updated = { ...comboStrategies };
       const next = { ...(updated[comboName] || {}), ...patch };
       // Prune to keep settings clean: default fallback with no extras = no entry.
       if (!next.fallbackStrategy || next.fallbackStrategy === "fallback") {
-        delete updated[comboName];
+        // Preserve fusionTuning/judgeRole/judgeModel so switching back to Fusion restores config.
+        // Only delete the entry if there's truly nothing worth preserving.
+        const hasTuning = next.fusionTuning || next.judgeRole || next.judgeModel;
+        if (hasTuning) {
+          updated[comboName] = { ...next, fallbackStrategy: "fallback" };
+        } else {
+          delete updated[comboName];
+        }
       } else {
         updated[comboName] = next;
       }
@@ -305,6 +318,7 @@ const JUDGE_ROLE_OPTIONS = [
 
 function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
+  const models = Array.isArray(combo?.models) ? combo.models : [];
   const current = strategy.fallbackStrategy || "fallback";
   const judge = strategy.judgeModel || "";
   const isFusion = current === "fusion";
@@ -322,7 +336,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
   // F-RT: Update a single panel slot's role (index aligned with combo.models)
   const handleSetPanelRole = (index, role) => {
     const next = [...panelRoles];
-    while (next.length < combo.models.length) next.push("");
+    while (next.length < models.length) next.push("");
     next[index] = role;
     handleSetFusionTuning({ roles: next });
   };
@@ -337,18 +351,18 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
           <div className="min-w-0 flex-1">
             <code className="block truncate font-mono text-sm font-medium">{combo.name}</code>
             <div className="mt-1 flex min-w-0 flex-wrap items-center gap-1">
-              {combo.models.length === 0 ? (
-                <span className="text-xs text-text-muted italic">No models</span>
+              {models.length === 0 ? (
+                <span className="text-xs text-text-muted italic">{translate("combos.noModels")}</span>
               ) : (
-                combo.models.slice(0, 3).map((model, index) => (
+                models.slice(0, 3).map((model, index) => (
                   <code key={index} className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5">
                     <span>{model}</span>
                     <CapacityBadges caps={modelCaps[model]} />
                   </code>
                 ))
               )}
-              {combo.models.length > 3 && (
-                <span className="text-[10px] text-text-muted">+{combo.models.length - 3} more</span>
+              {models.length > 3 && (
+                <span className="text-[10px] text-text-muted">+{models.length - 3} more</span>
               )}
             </div>
             {/* Fusion: judge picker (Auto = first model) */}
@@ -362,7 +376,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                     title="Pick the model that fuses panel answers"
                   >
                     <span className="material-symbols-outlined text-[13px]">gavel</span>
-                    <span className="truncate">{judge || translate("combos.autoMode", { model: combo.models[0] || translate("combos.firstModel") })}</span>
+                    <span className="truncate">{judge || translate("combos.autoMode", { model: models[0] || translate("combos.firstModel") })}</span>
                   </button>
                   {judge && (
                     <button
@@ -388,11 +402,11 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                   </select>
                 </div>
                 {/* F-RT: Panel role pickers — one per model slot */}
-                {combo.models.length > 0 && (
+                {models.length > 0 && (
                   <div className="mt-2 flex flex-col gap-1">
                     <span className="text-[11px] font-medium text-text-muted">{translate("combos.panelRoles")}</span>
                     <div className="flex flex-col gap-0.5">
-                      {combo.models.map((model, index) => (
+                      {models.map((model, index) => (
                         <div key={index} className="flex min-w-0 items-center gap-1.5">
                           <code className="inline-flex min-w-0 flex-1 items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-[11px] text-text-muted dark:bg-white/5">
                             <span className="text-[9px] text-text-muted/60 shrink-0">{index + 1}</span>
@@ -510,7 +524,7 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
         {...listeners}
         type="button"
         className="cursor-grab touch-none p-0.5 rounded text-text-muted hover:text-primary active:cursor-grabbing shrink-0"
-        title="Drag to reorder"
+        title={translate("dragToReorder")}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
           <circle cx="9" cy="4" r="2"/><circle cx="15" cy="4" r="2"/>
@@ -566,7 +580,7 @@ function ModelItem({ id, index, model, isFirst, isLast, onEdit, onMoveUp, onMove
       <button
         onClick={onRemove}
         className="p-0.5 hover:bg-red-500/10 rounded text-text-muted hover:text-red-500 transition-all"
-        title="Remove"
+        title={translate("Remove")}
       >
         <span className="material-symbols-outlined text-[12px]">close</span>
       </button>
@@ -622,7 +636,7 @@ function PanelSlot({ index, slot, isFirst, isLast, onPickPrimary, onPickBackup, 
               type="button"
               onClick={onPickBackup}
               className="min-w-0 flex-1 flex items-center gap-1 rounded border border-dashed border-text-muted/40 px-1.5 py-0.5 font-mono text-xs text-text-main hover:border-text-muted hover:bg-black/5 dark:hover:bg-white/5 transition-colors text-left"
-              title="Pick backup model"
+              title={translate("combos.pickBackupModel")}
             >
               <span className="material-symbols-outlined text-[12px] shrink-0 opacity-60">shield</span>
               <span className="text-[9px] uppercase tracking-wide opacity-60 shrink-0">B</span>
@@ -922,7 +936,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
       <Modal
         isOpen={isOpen}
         onClose={onClose}
-        title={isEdit ? "Edit Combo" : "Create Combo"}
+        title={isEdit ? translate("combos.editCombo") : translate("combos.createCombo")}
       >
         <div className="flex flex-col gap-3">
           {/* Name */}

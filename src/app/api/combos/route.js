@@ -10,7 +10,16 @@ const VALID_NAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 export async function GET() {
   try {
     const combos = await getCombos();
-    return NextResponse.json({ combos });
+    // Defensive: guarantee models is always an array. combosRepo.rowToCombo
+    // uses parseJson(row.models, []) which falls back to [] on null/parse-fail,
+    // but a JSON string like '"hello"' or object '{"a":1}' stored via direct
+    // DB writes could yield a non-array truthy value. Normalize here so the
+    // frontend never has to guard against non-array models.
+    const normalizedCombos = combos.map(c => ({
+      ...c,
+      models: Array.isArray(c?.models) ? c.models : []
+    }));
+    return NextResponse.json({ combos: normalizedCombos });
   } catch (error) {
     console.log("Error fetching combos:", error);
     return NextResponse.json({ error: "Failed to fetch combos" }, { status: 500 });
@@ -38,7 +47,11 @@ export async function POST(request) {
       return NextResponse.json({ error: "Combo name already exists" }, { status: 400 });
     }
 
-    const combo = await createCombo({ name, models: models || [], kind: kind || null });
+    // Defensive: reject non-array models (string/object truthy values would
+    // bypass the existing `models || []` fallback and pollute the DB with
+    // non-array JSON). Coerce to [] so downstream consumers always see array.
+    const safeModels = Array.isArray(models) ? models : [];
+    const combo = await createCombo({ name, models: safeModels, kind: kind || null });
 
     return NextResponse.json(combo, { status: 201 });
   } catch (error) {

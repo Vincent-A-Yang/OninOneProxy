@@ -10,12 +10,14 @@ export async function GET(request, { params }) {
   try {
     const { id } = await params;
     const combo = await getComboById(id);
-    
+
     if (!combo) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });
     }
-    
-    return NextResponse.json(combo);
+
+    // Defensive: guarantee models is always an array (symmetric with GET /api/combos).
+    const normalizedCombo = { ...combo, models: Array.isArray(combo.models) ? combo.models : [] };
+    return NextResponse.json(normalizedCombo);
   } catch (error) {
     console.log("Error fetching combo:", error);
     return NextResponse.json({ error: "Failed to fetch combo" }, { status: 500 });
@@ -27,7 +29,12 @@ export async function PUT(request, { params }) {
   try {
     const { id } = await params;
     const body = await request.json();
-    
+
+    // Defensive: coerce models to array if provided (mirrors POST /api/combos).
+    if (body.models !== undefined) {
+      body.models = Array.isArray(body.models) ? body.models : [];
+    }
+
     // Validate name format if provided
     if (body.name) {
       if (!VALID_NAME_REGEX.test(body.name)) {
