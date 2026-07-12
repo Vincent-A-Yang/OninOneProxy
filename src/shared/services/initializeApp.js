@@ -112,6 +112,91 @@ export async function initializeApp() {
     } catch (e) {
       console.warn("[InitApp] QuotaPool hydrate failed:", e?.message || String(e));
     }
+
+    // D3: Pre-register all active apikey connections so the quota pool is
+    // populated immediately on startup. Without this, the pool is empty
+    // until each model is called for the first time, which means:
+    //   1. Dashboard shows no sources on fresh deployment
+    //   2. First request to each model triggers a registration (slight latency)
+    //   3. Per-key cooldown tracking only starts after first call
+    // Pre-registration is idempotent (registerSource dedupes by sourceId).
+    // Strategy: collect (provider, model) pairs from combos + connection
+    // defaultModels, then register every active apikey connection of that
+    // provider under each pair — so multiple keys per provider all land in
+    // the pool and the first-key-failure → second-key fallback works.
+    // Fail-open: any error here is swallowed so app init never breaks.
+    try {
+      const { getProviderConnections } = await import("@/lib/db/repos/connectionsRepo");
+      const { getCombos } = await import("@/lib/db/repos/combosRepo");
+      const { registerSource, getLogicalModelId } = await import("open-sse/services/quotaPool.js");
+
+      const activeConns = await getProviderConnections({ isActive: true });
+
+      // Group active apikey connections by provider (only those carrying a
+      // real apiKey — OAuth/access_token connections lazy-register at runtime
+      // when their tokens refresh, so we don't pre-register them here).
+      const connsByProvider = new Map();
+      for (const conn of activeConns) {
+        if (!conn.provider || !conn.apiKey) continue;
+        if (!connsByProvider.has(conn.provider)) connsByProvider.set(conn.provider, []);
+        connsByProvider.get(conn.provider).push(conn);
+      }
+
+      // Collect (provider|model) pairs to pre-register.
+      const pairs = new Set();
+
+      // Source 1: combos table — model strings in "provider/model" form.
+      try {
+        const combos = await getCombos();
+        for (const combo of combos) {
+          if (!Array.isArray(combo.models)) continue;
+          for (const m of combo.models) {
+            if (typeof m !== "string" || !m) continue;
+            const slash = m.indexOf("/");
+            if (slash > 0) {
+              const p = m.slice(0, slash);
+              const modelName = m.slice(slash + 1);
+              if (p && modelName) pairs.add(`${p}|${modelName}`);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("[InitApp] Combos read failed:", e?.message || String(e));
+      }
+
+      // Source 2: each active connection's defaultModel.
+      for (const conn of activeConns) {
+        if (!conn.defaultModel || !conn.provider) continue;
+        const dm = String(conn.defaultModel);
+        const slash = dm.indexOf("/");
+        const modelName = slash > 0 ? dm.slice(slash + 1) : dm;
+        if (modelName) pairs.add(`${conn.provider}|${modelName}`);
+      }
+
+      let registered = 0;
+      let skipped = 0;
+      for (const pair of pairs) {
+        const sepIdx = pair.indexOf("|");
+        const provider = pair.slice(0, sepIdx);
+        const model = pair.slice(sepIdx + 1);
+        const conns = connsByProvider.get(provider) || [];
+        if (conns.length === 0) { skipped++; continue; }
+        const logicalId = getLogicalModelId(`${provider}/${model}`);
+        for (const conn of conns) {
+          const id = registerSource(logicalId, {
+            provider,
+            apiKey: conn.apiKey,
+            model,
+          });
+          if (id) registered++;
+          else skipped++;
+        }
+      }
+
+      console.log(`[InitApp] QuotaPool pre-registered: ${registered} sources (${skipped} skipped, ${connsByProvider.size} providers)`);
+    } catch (e) {
+      console.warn("[InitApp] QuotaPool pre-registration failed:", e?.message || String(e));
+    }
   } catch (error) {
     console.error("[InitApp] Error:", error);
   }

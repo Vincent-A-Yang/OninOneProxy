@@ -82,7 +82,12 @@ const DEFAULT_SETTINGS = {
   // are run through errorAnalyzer to drive cool_down / switch_key /
   // switch_model decisions.
   quotaPoolEnabled: true,
-  smartErrorHandlingEnabled: false,
+  // D2: Protection-class switch — defaults ON. Smart error handling (F5)
+  // analyzes upstream errors and drives cool_down / switch_key / switch_model
+  // decisions. This is a core protection capability of OninOneProxy and must
+  // not require manual opt-in. The switch is retained only for emergency
+  // disable by operators; default behavior is "always on".
+  smartErrorHandlingEnabled: true,
   // F6: Per-provider limits enforcement. Defaults ON so request counts /
   // token usage are tracked per provider and capped according to configured
   // limits.
@@ -115,16 +120,17 @@ const DEFAULT_SETTINGS = {
   // Dashboard can show the configured state and so future code can read
   // it to decide whether to emit verbose per-request logs.
   logRotationEnabled: true,
-  // Stage 5.4: OAuth anti-ban runtime config. Defaults preserve existing
-  // OninOneProxy behavior (master switch off → every guard short-circuits to
-  // permissive). Operators opt in via Dashboard settings panel to engage
-  // the per-account concurrency cap, refresh jitter, 429/403 monitor, and
-  // header spoof configurability. See `docs/oauth-anti-ban-guide.md` §3.4.
+  // Stage 5.4: OAuth anti-ban runtime config.
+  // D2: Protection-class switch — defaults ON. OAuth anti-ban (per-account
+  // concurrency cap, refresh jitter, 429/403 monitor, header spoof) is a
+  // core protection capability that helps avoid triggering upstream rate
+  // limits and account bans. This must not require manual opt-in. The
+  // switch is retained only for emergency disable by operators.
   //
   // oauthAntiBanEnabled toggles OAUTH_ANTI_BAN_CONFIG.enabled via the
   // applyRuntimeConfigOverride hook in custom-server.js. When false, all
   // guards degrade to no-ops (fail-open).
-  oauthAntiBanEnabled: false,
+  oauthAntiBanEnabled: true,
   // Per-account concurrency cap (default 5). Anti-ban guide §3.4
   // recommends 3-5; we pick the upper bound to avoid over-throttling.
   oauthAntiBanMaxConcurrency: 5,

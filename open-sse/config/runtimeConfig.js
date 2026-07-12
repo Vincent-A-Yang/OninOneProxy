@@ -86,13 +86,15 @@ export const STREAM_STALL_TIMEOUT_MS = envMs("STREAM_STALL_TIMEOUT_MS", 120 * 10
 export const STREAM_FIRST_CHUNK_TIMEOUT_MS = envMs("STREAM_FIRST_CHUNK_TIMEOUT_MS", 90 * 1000);
 
 // Fetch connect timeout: abort if upstream doesn't return response headers
-// within this duration. Kept at 60s intentionally — this is the fail-open
-// backstop for genuinely slow upstreams (e.g. cold-start serverless providers)
-// and should not be tightened below ~30s. With the Clash root cause fixed
-// (domestic direct connect + ProxyAgent connectTimeout=5s), this outer 60s
-// rarely fires; it exists to guarantee the request eventually aborts and
-// hands control to combo/fusion retry. Env: FETCH_CONNECT_TIMEOUT_MS.
-export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 60 * 1000);
+// within this duration. D5 fix: tuned down from 60s to 8s. The previous 60s
+// default was masking dead-proxy failures — undici ProxyAgent's own
+// connectTimeout/headersTimeout/bodyTimeout were hardcoded (5s/30s/60s) and
+// ignored this value entirely, so a dead Clash proxy + direct-connect
+// fallback to a foreign (nvidia) upstream stacked 6× timeouts = 249s.
+// Now 8s feeds into ProxyAgent's connectTimeout/headersTimeout/bodyTimeout
+// (see proxyFetch.js getDispatcher) AND fallback to direct is blocked for
+// foreign domains (see proxyFetch.js proxyAwareFetch). Env: FETCH_CONNECT_TIMEOUT_MS.
+export const FETCH_CONNECT_TIMEOUT_MS = envMs("FETCH_CONNECT_TIMEOUT_MS", 8 * 1000);
 
 // Gemini native TTS fetch timeout: abort if Google does not return response headers in time.
 export const GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS = envMs("GEMINI_NATIVE_TTS_FETCH_TIMEOUT_MS", 45 * 1000);

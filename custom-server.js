@@ -236,6 +236,19 @@ function registerMemoryMonitor() {
   setImmediate(logMemorySnapshot);
 }
 
+// === D3: Quota Pool Pre-registration ===
+//
+// Pre-registers every active apikey connection + every combo model pair into
+// the in-memory quota pool so same-provider multi-key failover works from the
+// first request (fixes lazy-registration bug where the pool was empty until
+// first call).
+// Fail-open: any error is logged but never blocks server boot.
+// Idempotent: registerSource dedupes by sourceId, safe to re-run on restart.
+// ESM file → use dynamic import(). CJS module.exports becomes `default`.
+import("./d3-preregister.cjs")
+  .then((mod) => mod?.default?.runD3PreRegister?.() || mod?.runD3PreRegister?.())
+  .catch((e) => console.warn("[D3] pre-register failed:", e?.message || String(e)));
+
 // Boot the Next standalone server last, after all wrappers and timers above
 // are registered. Static `import` would be hoisted to module top and break
 // the ordering invariant (wrapper must be installed before server boots),

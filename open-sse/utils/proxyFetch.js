@@ -1,5 +1,5 @@
 import { Readable } from "stream";
-import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
+import { MEMORY_CONFIG, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { dbg } from "./debugLog.js";
 import { createLruMap } from "./lruMap.js";
 
@@ -143,6 +143,9 @@ const DOMESTIC_DIRECT_HOSTS = [
   "01.ai",                 // Yi / Lingyi (api.01.ai)
   "hunyuan.tencent.com",   // Tencent Hunyuan
   "baidubce.com",          // Baidu / ERNIE (qianfan.baidubce.com)
+  "sensenova.cn",          // SenseTime / 商汤 (token.sensenova.cn) — D5: added so combo fallback (方案C) treats it as domestic
+  "baidu.com",             // Baidu generic (e.g. aip.baidubce.com subdomains) — D5: added for completeness
+  "tencentcloudapi.com",   // Tencent Cloud API generic — D5: added for completeness
 ];
 
 function isDomesticDirectHost(targetUrl) {
@@ -274,24 +277,30 @@ async function getDispatcher(proxyUrl) {
     // manual `delete(keys().next().value)` was removed because the underlying
     // Map is no longer exposed by the LRU wrapper.
     const { ProxyAgent } = await import("undici");
+    // D5 fix (方案A): connectTimeout/headersTimeout/bodyTimeout now read from
+    // FETCH_CONNECT_TIMEOUT_MS (default 8s, was hardcoded 5s/30s/60s). The old
+    // hardcoded values ignored FETCH_CONNECT_TIMEOUT_MS entirely, so reducing
+    // that env var had no effect on the underlying undici ProxyAgent — a dead
+    // Clash proxy still took 30s (headersTimeout) before failing, then fell
+    // back to direct connect (方案C now blocks that for foreign domains).
+    // 8s on all three means: TCP connect must complete in 8s, response headers
+    // must arrive within 8s of request start, and inter-chunk gaps ≤ 8s.
     // Connection pool tuning (see docs/network-performance-audit.md §5.3):
-    // - connectTimeout 5s: surface dead Clash upstream quickly, fail-open
     // - keepAliveTimeout 30s: reuse pooled sockets for typical LLM bursty traffic
     // - keepAliveMaxTimeout 60s: hard ceiling to refresh half-closed sockets
     // - maxConnections 50: enough headroom for parallel combo/fusion requests
-    // - bodyTimeout 60s / headersTimeout 30s: per-request guards matching stream windows
     // - pipelining 1: keep ordering simple (LLM responses are not pipelined)
     proxyDispatchers.set(
       normalized,
       new ProxyAgent({
         uri: normalized,
-        connectTimeout: 5_000,
+        connectTimeout: FETCH_CONNECT_TIMEOUT_MS,
         keepAliveTimeout: 30_000,
         keepAliveMaxTimeout: 60_000,
         maxConnections: 50,
         pipelining: 1,
-        bodyTimeout: 60_000,
-        headersTimeout: 30_000,
+        bodyTimeout: FETCH_CONNECT_TIMEOUT_MS,
+        headersTimeout: FETCH_CONNECT_TIMEOUT_MS,
       })
     );
   }
@@ -418,6 +427,20 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (proxyOptions?.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
+      }
+      // D5 fix (方案C): foreign domains (not in DOMESTIC_DIRECT_HOSTS) must
+      // NOT fall back to direct connect. Foreign APIs (e.g. nvidia
+      // integrate.api.nvidia.com) are unreachable without a proxy from this
+      // container; direct connect just burns another timeout before failing,
+      // stacking 6× timeouts across 3 accounts × 2 fetches = 249s. Fail fast
+      // so the caller's combo/fusion retry can move on immediately. Domestic
+      // hosts still get the direct fallback (though they normally bypass
+      // proxy entirely via isDomesticDirectHost() at the top of this function).
+      if (!isDomesticDirectHost(targetUrl)) {
+        throw new Error(
+          `[ProxyFetch] Proxy failed for foreign host ${new URL(targetUrl).hostname} ` +
+          `(方案C: no direct fallback for foreign domains): ${proxyError.message}`
+        );
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
       return originalFetch(url, options);

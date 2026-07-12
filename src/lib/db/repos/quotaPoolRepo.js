@@ -283,3 +283,118 @@ export async function upsertSource(source) {
     console.warn(`[quotaPoolRepo] upsertSource failed: ${e?.message || String(e)}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// D4: Cooldown state persistence (Bug #3 fix)
+// ---------------------------------------------------------------------------
+// Cooldowns are persisted separately from saveSourceState so that the
+// cooldown lifecycle is decoupled from full-source-state snapshots.
+//
+// Storage shape:
+//   scope = "quotaPool"
+//   key   = "quotaPool:cooldown:<sourceId>"
+//   value = JSON { expiresAt: <ms>, reason: <string>, cooledAt: <ms> }
+//
+// Fail-open contract: read/write errors are caught + logged; the in-memory
+// quotaPool continues to work without persisted cooldowns (degrades to the
+// pre-fix behavior where cooldowns are lost on restart).
+
+const COOLDOWN_KEY_PREFIX = "quotaPool:cooldown:";
+
+function cooldownKey(sourceId) {
+  return `${COOLDOWN_KEY_PREFIX}${sourceId}`;
+}
+
+/**
+ * Persist (or update) the cooldown state for a source.
+ *
+ * Writes to the kv table under scope="quotaPool" with key
+ * "quotaPool:cooldown:<sourceId>". The value is a JSON object containing
+ * { expiresAt, reason, cooledAt }.
+ *
+ * Fail-open: any error is caught + logged; it never blocks the in-memory
+ * coolDown path.
+ *
+ * @param {string} sourceId        - Stable source id (provider|maskKey|model).
+ * @param {number} expiresAtMs     - Cooldown expiry timestamp in ms (Date.now()-based).
+ * @param {string} [reason=""]     - Free-text reason for the cooldown.
+ * @returns {Promise<void>}
+ */
+export async function saveCooldown(sourceId, expiresAtMs, reason = "") {
+  if (!sourceId) return;
+  try {
+    const db = await getAdapter();
+    const payload = {
+      sourceId,
+      expiresAt: Math.max(0, Math.floor(Number(expiresAtMs) || 0)),
+      reason: reason || "manual",
+      cooledAt: Date.now(),
+    };
+    db.run(
+      `INSERT INTO kv(scope, key, value) VALUES(?, ?, ?)
+       ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`,
+      [SCOPE, cooldownKey(sourceId), stringifyJson(payload)]
+    );
+  } catch (e) {
+    // fail-open: persistence error does not block coolDown
+    console.warn(`[quotaPoolRepo] saveCooldown failed: ${e?.message || String(e)}`);
+  }
+}
+
+/**
+ * Load all persisted cooldown records.
+ *
+ * Returns an array of { sourceId, expiresAt, reason, cooledAt } for every
+ * row in kv where scope="quotaPool" and key starts with "quotaPool:cooldown:".
+ * Expired records (expiresAt <= now) are filtered out by the caller; this
+ * function returns everything so the caller can decide what to apply.
+ *
+ * Fail-open: any error → returns empty array.
+ *
+ * @returns {Promise<Array<{sourceId: string, expiresAt: number, reason: string, cooledAt: number}>>}
+ */
+export async function loadCooldowns() {
+  try {
+    const db = await getAdapter();
+    const rows = db.all(
+      `SELECT key, value FROM kv WHERE scope = ? AND key LIKE ?`,
+      [SCOPE, `${COOLDOWN_KEY_PREFIX}%`]
+    );
+    const out = [];
+    for (const r of rows) {
+      const parsed = parseJson(r.value, null);
+      if (!parsed || !parsed.sourceId) continue;
+      out.push({
+        sourceId: parsed.sourceId,
+        expiresAt: Number(parsed.expiresAt) || 0,
+        reason: parsed.reason || "manual",
+        cooledAt: Number(parsed.cooledAt) || 0,
+      });
+    }
+    return out;
+  } catch (e) {
+    // fail-open: return empty array on any error
+    console.warn(`[quotaPoolRepo] loadCooldowns failed: ${e?.message || String(e)}`);
+    return [];
+  }
+}
+
+/**
+ * Delete a single source's persisted cooldown record (e.g. after clearCooldown).
+ *
+ * Fail-open: any error is caught + logged; it never blocks the in-memory
+ * clearCooldown path.
+ *
+ * @param {string} sourceId
+ * @returns {Promise<void>}
+ */
+export async function clearCooldown(sourceId) {
+  if (!sourceId) return;
+  try {
+    const db = await getAdapter();
+    db.run(`DELETE FROM kv WHERE scope = ? AND key = ?`, [SCOPE, cooldownKey(sourceId)]);
+  } catch (e) {
+    // fail-open: persistence error does not block clearCooldown
+    console.warn(`[quotaPoolRepo] clearCooldown failed: ${e?.message || String(e)}`);
+  }
+}

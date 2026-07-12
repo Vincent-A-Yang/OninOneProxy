@@ -76,16 +76,107 @@ const logicalIndex = new Map();
 const sourceMeta = new Map();
 
 // ---------------------------------------------------------------------------
-// Lazy import of quotaPoolRepo.upsertSource (runtime persistence)
+// Lazy import of quotaPoolRepo (runtime persistence)
 // ---------------------------------------------------------------------------
 // Dynamic import avoids circular deps and prevents test environments without
 // a DB from crashing on module load. The import resolves once at startup;
-// if it fails, _upsertSource stays null and persistence is silently skipped
+// if it fails, all _* helpers stay null and persistence is silently skipped
 // (fail-open contract: the in-memory pool works without persistence).
+//
+// D4 (Bug #3): also imports saveCooldown / loadCooldowns / clearCooldown so
+// cooldown state survives container restarts.
 let _upsertSource = null;
+let _saveCooldown = null;
+let _loadCooldowns = null;
+let _clearCooldownPersist = null;
 const _repoImportPromise = import("@/lib/db/repos/quotaPoolRepo")
-  .then((repo) => { _upsertSource = repo.upsertSource || null; })
-  .catch(() => { /* fail-open: persistence unavailable */ });
+  .then((repo) => {
+    _upsertSource = repo.upsertSource || null;
+    _saveCooldown = repo.saveCooldown || null;
+    _loadCooldowns = repo.loadCooldowns || null;
+    _clearCooldownPersist = repo.clearCooldown || null;
+  })
+  .catch(() => {
+    // D4 (Bug #3) fallback: @/ alias cannot resolve in custom-server.js runtime
+    // context (webpack alias only works inside Next-compiled code — confirmed
+    // by test_repo_import.cjs: "Cannot find package '@/lib'").
+    // Use direct better-sqlite3 access, same pattern as d3-preregister.cjs.
+    return import("better-sqlite3")
+      .then((mod) => {
+        const Database = mod.default || mod.Database || mod;
+        const DB_PATH = "/app/data/db/data.sqlite";
+        const SCOPE = "quotaPool";
+        const COOLDOWN_KEY_PREFIX = "quotaPool:cooldown:";
+
+        _saveCooldown = async (sourceId, expiresAtMs, reason = "") => {
+          let db = null;
+          try {
+            if (!sourceId) return;
+            db = new Database(DB_PATH, {});
+            const payload = JSON.stringify({
+              sourceId,
+              expiresAt: Math.max(0, Math.floor(Number(expiresAtMs) || 0)),
+              reason: reason || "manual",
+              cooledAt: Date.now(),
+            });
+            db.prepare(
+              `INSERT INTO kv(scope, key, value) VALUES(?, ?, ?)
+               ON CONFLICT(scope, key) DO UPDATE SET value = excluded.value`
+            ).run(SCOPE, COOLDOWN_KEY_PREFIX + sourceId, payload);
+          } catch (e) {
+            console.warn(`[quotaPool] D4-fallback saveCooldown failed: ${e?.message || String(e)}`);
+          } finally {
+            try { if (db) db.close(); } catch {}
+          }
+        };
+
+        _loadCooldowns = async () => {
+          let db = null;
+          try {
+            db = new Database(DB_PATH, { readonly: true });
+            const rows = db.prepare(
+              `SELECT key, value FROM kv WHERE scope = ? AND key LIKE ?`
+            ).all(SCOPE, COOLDOWN_KEY_PREFIX + "%");
+            const out = [];
+            for (const r of rows) {
+              let parsed = null;
+              try { parsed = JSON.parse(r.value); } catch { continue; }
+              if (!parsed || !parsed.sourceId) continue;
+              out.push({
+                sourceId: parsed.sourceId,
+                expiresAt: Number(parsed.expiresAt) || 0,
+                reason: parsed.reason || "manual",
+                cooledAt: Number(parsed.cooledAt) || 0,
+              });
+            }
+            return out;
+          } catch (e) {
+            console.warn(`[quotaPool] D4-fallback loadCooldowns failed: ${e?.message || String(e)}`);
+            return [];
+          } finally {
+            try { if (db) db.close(); } catch {}
+          }
+        };
+
+        _clearCooldownPersist = async (sourceId) => {
+          let db = null;
+          try {
+            if (!sourceId) return;
+            db = new Database(DB_PATH, {});
+            db.prepare(
+              `DELETE FROM kv WHERE scope = ? AND key = ?`
+            ).run(SCOPE, COOLDOWN_KEY_PREFIX + sourceId);
+          } catch (e) {
+            console.warn(`[quotaPool] D4-fallback clearCooldown failed: ${e?.message || String(e)}`);
+          } finally {
+            try { if (db) db.close(); } catch {}
+          }
+        };
+
+        console.log("[quotaPool] D4: better-sqlite3 fallback active for cooldown persistence");
+      })
+      .catch(() => { /* fail-open: better-sqlite3 unavailable */ });
+  });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -519,6 +610,15 @@ export function coolDown(sourceId, seconds, reason = "") {
     if (untilMs > state.cooldownUntilMs) {
       state.cooldownUntilMs = untilMs;
       state.cooldownReason = reason || state.cooldownReason || "manual";
+      // D4 (Bug #3): persist cooldown state so it survives container restarts.
+      // Fire-and-forget + fail-open: DB write failure does not block the
+      // in-memory cooldown path (errors are logged inside the repo).
+      try {
+        if (_saveCooldown) {
+          _saveCooldown(sourceId, untilMs, state.cooldownReason)
+            .catch(() => { /* fail-open: persistence error logged in repo */ });
+        }
+      } catch { /* fail-open */ }
     }
   } catch { /* fail-open */ }
 }
@@ -533,6 +633,14 @@ export function clearCooldown(sourceId) {
     if (!state) return;
     state.cooldownUntilMs = 0;
     state.cooldownReason = null;
+    // D4 (Bug #3): also clear the persisted cooldown so it doesn't get
+    // rehydrated on the next restart. Fire-and-forget + fail-open.
+    try {
+      if (_clearCooldownPersist) {
+        _clearCooldownPersist(sourceId)
+          .catch(() => { /* fail-open: persistence error logged in repo */ });
+      }
+    } catch { /* fail-open */ }
   } catch { /* fail-open */ }
 }
 
@@ -987,6 +1095,45 @@ export function hydrateFromRepo(sources) {
       console.warn(`[quotaPool] hydrateFromRepo: failed to register source: ${e?.message || String(e)}`);
     }
   }
+
+  // D4 (Bug #3): Asynchronously rehydrate persisted cooldown state.
+  // Fire-and-forget + fail-open: this runs detached so the synchronous
+  // hydrateFromRepo return value is not delayed. The repo promise typically
+  // resolves in <1ms after module load, well before the first inbound
+  // request, so the race window is negligible. Even if a request arrives
+  // before cooldowns are rehydrated, the worst case is one extra 429 retry
+  // — the same behavior as before this fix.
+  try {
+    _repoImportPromise
+      .then(() => {
+        if (!_loadCooldowns) return null;
+        return _loadCooldowns();
+      })
+      .then((cooldowns) => {
+        if (!Array.isArray(cooldowns) || cooldowns.length === 0) return;
+        const ts = nowMs();
+        let applied = 0;
+        for (const c of cooldowns) {
+          if (!c || !c.sourceId) continue;
+          // Skip already-expired cooldowns (don't resurrect dead state).
+          if (c.expiresAt <= ts) continue;
+          const state = sourcesById.get(c.sourceId);
+          if (!state) continue;
+          // Only apply if the persisted expiry is later than what's already
+          // in memory (avoid clobbering a fresher runtime cooldown).
+          if (c.expiresAt > state.cooldownUntilMs) {
+            state.cooldownUntilMs = c.expiresAt;
+            state.cooldownReason = c.reason || "recovered-from-persistence";
+            applied++;
+          }
+        }
+        if (applied > 0) {
+          console.log(`[quotaPool] D4: rehydrated ${applied} cooldown(s) from persistence`);
+        }
+      })
+      .catch(() => { /* fail-open: cooldown rehydration error is non-fatal */ });
+  } catch { /* fail-open */ }
+
   return { total, success, failed };
 }
 

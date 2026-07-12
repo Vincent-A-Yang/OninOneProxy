@@ -287,7 +287,12 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
     try {
-      // F5: Register this combo model as a source and skip if cooling.
+      // F5: Register this combo model as a source for usage tracking.
+      // Bug #1 fix: Do NOT skip the provider based on combo-level cooldown.
+      // handleSingleModelChat internally handles Key-level cooldown with real
+      // apiKeys (chat.js line 736-741). Skipping here would bypass ALL Keys
+      // for one provider even if only one Key failed — breaking the first
+      // layer of failover (same-provider multi-Key switching).
       let f5SourceId = "";
       if (f5Enabled) {
         try {
@@ -296,8 +301,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
           const m = slash > 0 ? modelStr.slice(slash + 1) : modelStr;
           f5SourceId = registerSource(f5LogicalId, { provider: p, apiKey: "", model: m });
           if (f5SourceId && isCooling(f5SourceId)) {
-            log.info("COMBO", `Model ${modelStr} cooling in quota pool, skipping`);
-            continue;
+            log.info("COMBO", `Model ${modelStr} combo-level source cooling, but still trying (Key-level cooldown handled internally by handleSingleModelChat)`);
           }
         } catch { /* fail-open */ }
       }
