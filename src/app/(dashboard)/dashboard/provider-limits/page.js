@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { Card, Button, Modal, Input, Select, Toggle, Badge, ConfirmModal } from "@/shared/components";
 import Tooltip from "@/shared/components/Tooltip";
-import PROVIDER_REGISTRY from "open-sse/providers/registry/index.js";
 
 /**
  * F6: Provider Rate / Quota Limits Dashboard.
@@ -484,30 +483,79 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
 
   const update = (patch) => setForm((f) => ({ ...f, ...patch }));
 
-  // Build provider options from the registry once. Fallback to an empty
-  // list when the registry import resolves to nothing (e.g. SSR).
-  const providerOptions = useMemo(() => {
-    try {
-      const arr = Array.isArray(PROVIDER_REGISTRY) ? PROVIDER_REGISTRY : [];
-      return arr
-        .filter((p) => p && p.id)
-        .map((p) => ({
-          value: String(p.id).toLowerCase(),
-          label: p.display?.name || p.id,
-        }))
-        .sort((a, b) => a.label.localeCompare(b.label));
-    } catch {
-      return [];
-    }
+  // Active provider options (fetched from /api/providers, filtered by isActive).
+  // Dedupe by provider id; keep first connection id for model/apiKey fetches.
+  const [providerOptions, setProviderOptions] = useState([]);
+  const [providerConnectionsMap, setProviderConnectionsMap] = useState({});
+  const [modelOptions, setModelOptions] = useState([]);
+  const [apiKeyOptions, setApiKeyOptions] = useState([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [loadingApiKeys, setLoadingApiKeys] = useState(false);
+
+  // Fetch active providers on mount.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/providers", { headers: { "Cache-Control": "no-store" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (cancelled || !data || !Array.isArray(data.connections)) return;
+        const active = data.connections.filter((c) => c.isActive === true);
+        const seen = new Set();
+        const options = [];
+        const connMap = {};
+        for (const c of active) {
+          const pid = (c.provider || "").toLowerCase().trim();
+          if (!pid || seen.has(pid)) continue;
+          seen.add(pid);
+          options.push({ value: pid, label: c.name ? `${c.name} (${pid})` : pid });
+          connMap[pid] = c.id;
+        }
+        // Edit mode: ensure the current provider is present in the list.
+        const currentPid = (form.provider || "").toLowerCase().trim();
+        if (currentPid && !seen.has(currentPid)) {
+          options.push({ value: currentPid, label: currentPid });
+        }
+        setProviderOptions(options);
+        setProviderConnectionsMap(connMap);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Detect whether the current provider text matches a known registry id.
-  // When it does NOT match, the user is entering a custom provider manually.
-  const providerMatchesRegistry = useMemo(() => {
-    const v = (form.provider || "").toLowerCase().trim();
-    if (!v) return false;
-    return providerOptions.some((o) => o.value === v);
-  }, [form.provider, providerOptions]);
+  // Fetch models when provider changes.
+  useEffect(() => {
+    const pid = (form.provider || "").toLowerCase().trim();
+    if (!pid) { setModelOptions([]); return; }
+    const connId = providerConnectionsMap[pid];
+    if (!connId) { setModelOptions([]); return; }
+    setLoadingModels(true);
+    fetch(`/api/providers/${encodeURIComponent(connId)}/models`, { headers: { "Cache-Control": "no-store" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || !Array.isArray(data.models)) { setModelOptions([]); return; }
+        setModelOptions(data.models.map((m) => ({ value: m.id, label: m.name || m.id })));
+      })
+      .catch(() => setModelOptions([]))
+      .finally(() => setLoadingModels(false));
+  }, [form.provider, providerConnectionsMap]);
+
+  // Fetch api-key masks when provider changes.
+  useEffect(() => {
+    const pid = (form.provider || "").toLowerCase().trim();
+    if (!pid) { setApiKeyOptions([]); return; }
+    const connId = providerConnectionsMap[pid];
+    if (!connId) { setApiKeyOptions([]); return; }
+    setLoadingApiKeys(true);
+    fetch(`/api/providers/${encodeURIComponent(connId)}/api-keys`, { headers: { "Cache-Control": "no-store" } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data || !Array.isArray(data.keys)) { setApiKeyOptions([]); return; }
+        setApiKeyOptions(data.keys.map((k) => ({ value: k.apiKeyMask, label: k.label || k.apiKeyMask })));
+      })
+      .catch(() => setApiKeyOptions([]))
+      .finally(() => setLoadingApiKeys(false));
+  }, [form.provider, providerConnectionsMap]);
 
   const addRateWindow = () => {
     if (form.rateWindows.length >= 5) return;
@@ -662,44 +710,39 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
             ]}
             hint="提供商级别适用于该提供商的所有来源；来源级别仅匹配指定的 APIKEY+模型；模型级别匹配特定提供商+模型"
           />
-          <div>
-            <label className="text-sm font-medium text-text-main block mb-1.5">
-              提供商
-            </label>
-            {/* Combobox: Select from registry + manual Input fallback. */}
-            <Select
-              value={providerMatchesRegistry ? form.provider.toLowerCase() : ""}
-              onChange={(e) => {
-                if (e.target.value) update({ provider: e.target.value });
-              }}
-              options={[{ value: "", label: "— 选择或在下方输入 —" }, ...providerOptions]}
-              hint="选择或输入提供商"
-            />
-            <Input
-              value={form.provider}
-              onChange={(e) => update({ provider: e.target.value })}
-              placeholder="例如 nvidia（自定义）"
-              required
-              className="mt-1"
-            />
-          </div>
+          <Select
+            label="提供商"
+            value={(form.provider || "").toLowerCase()}
+            onChange={(e) => update({ provider: e.target.value, model: "", apiKeyMask: "" })}
+            options={[{ value: "", label: "— 选择已启用的提供商 —" }, ...providerOptions]}
+            hint="仅显示已启用的提供商。如需新增，请先在提供商页面启用。"
+            required
+          />
         </div>
 
         {/* Source-only fields */}
         {form.scope === "source" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <Input
-              label="API Key 掩码"
+            <Select
+              label="API Key"
               value={form.apiKeyMask || ""}
               onChange={(e) => update({ apiKeyMask: e.target.value })}
-              placeholder="例如 sk-...abc"
+              options={[
+                { value: "", label: loadingApiKeys ? "加载中..." : apiKeyOptions.length === 0 ? "无可用 API Key" : "— 选择 API Key —" },
+                ...apiKeyOptions,
+              ]}
+              hint="选择已启用提供商的 API Key（掩码显示）"
               required
             />
-            <Input
+            <Select
               label="模型（可选）"
               value={form.model || ""}
               onChange={(e) => update({ model: e.target.value })}
-              placeholder="例如 gpt-4o"
+              options={[
+                { value: "", label: loadingModels ? "加载中..." : "— 不指定模型 —" },
+                ...modelOptions,
+              ]}
+              hint="留空则适用于该 API Key 下的所有模型"
             />
           </div>
         )}
@@ -707,11 +750,15 @@ function LimitFormModal({ isOpen, onClose, onSave, saving, editingId, initialCon
         {/* Model-scope required model field */}
         {form.scope === "model" && (
           <div className="grid grid-cols-1 gap-3">
-            <Input
+            <Select
               label="模型（模型级别必填）"
               value={form.model || ""}
               onChange={(e) => update({ model: e.target.value })}
-              placeholder="例如 gpt-4o"
+              options={[
+                { value: "", label: loadingModels ? "加载中..." : modelOptions.length === 0 ? "无可用模型" : "— 选择模型 —" },
+                ...modelOptions,
+              ]}
+              hint="仅显示已启用提供商的模型"
               required
             />
           </div>
