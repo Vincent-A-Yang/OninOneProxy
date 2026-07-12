@@ -524,6 +524,10 @@ export default function CoworkToolCard({
         title="Create Cowork Combo"
       />
 
+      {/* B4 Audit: CoworkToolCard uses `selectedModels` as a flat list (handleAddModel has
+          explicit `selectedModels.includes(value)` guard). Multi-model LIST, not SLOTS — no
+          primary/backup concept. allowReuse=true would break toggle-to-deselect UX without
+          enabling real duplication. Conclusion: NO reuse need, no modification. */}
       <ModelSelectModal
         isOpen={modelSelectOpen}
         onClose={() => setModelSelectOpen(false)}

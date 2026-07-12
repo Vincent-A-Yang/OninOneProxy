@@ -164,12 +164,16 @@ describe("D1 providerLimits 与 F5 quotaPool 协同测试", () => {
 // D4 — 边界测试
 // ===========================================================================
 describe("D4 边界测试", () => {
-  it("D4.1 空配置: getEffectiveLimits 返回空, registerSource 无 providerLimitsConfig 仍正常", async () => {
+  it("D4.1 空配置: getEffectiveLimits 返回 UNIVERSAL_FALLBACK_LIMITS, registerSource 无 providerLimitsConfig 仍正常", async () => {
     getLimitForSource.mockResolvedValue([]);
     getLimitsByProvider.mockResolvedValue([]);
-    // test-provider 不在 DEFAULT_PROVIDER_LIMITS 表中，确保空配置时返回空
+    // D4: test-provider 不在 DEFAULT_PROVIDER_LIMITS 表中，未知 provider 返回通用兜底 60 RPM
     const limits = await getEffectiveLimits("test-provider", "key", "model");
-    expect(limits).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(limits).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
 
     // F5 向后兼容：不传 providerLimitsConfig 时 registerSource 正常工作
     const id = registerSource("coop-model-41", {
@@ -183,11 +187,15 @@ describe("D4 边界测试", () => {
     expect(selected.sourceId).toBe(id);
   });
 
-  it("D4.2 provider 不存在时返回默认空配置", async () => {
+  it("D4.2 provider 不存在时返回 UNIVERSAL_FALLBACK_LIMITS (D4: 60 RPM 通用兜底)", async () => {
     getLimitForSource.mockResolvedValue([]);
     getLimitsByProvider.mockResolvedValue([]);
     const limits = await getEffectiveLimits("nonexistent-provider", "key", "model");
-    expect(limits).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(limits).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
   });
 
   it("D4.2 空 provider 返回默认空配置（短路）", async () => {
@@ -333,21 +341,30 @@ describe("D4 边界测试", () => {
 // D5 — 失败注入测试
 // ===========================================================================
 describe("D5 失败注入测试", () => {
-  it("D5.1 getLimitForSource 抛异常时 fail-open 返回空配置", async () => {
+  it("D5.1 getLimitForSource 抛异常时 fail-open 返回 UNIVERSAL_FALLBACK_LIMITS", async () => {
     getLimitForSource.mockRejectedValue(new Error("db read error"));
     getLimitsByProvider.mockResolvedValue([]);
-    // test-provider 不在默认表中，确保 fail-open 不被默认值干扰
+    // D4: test-provider 不在默认表中，fail-open 走 getDefaultLimits 通用兜底
     const limits = await getEffectiveLimits("test-provider", "key", "model");
-    expect(limits).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(limits).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
     expect(getLimitForSource).toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalled();
   });
 
-  it("D5.1 getLimitsByProvider 抛异常时 fail-open 返回空配置", async () => {
+  it("D5.1 getLimitsByProvider 抛异常时 fail-open 返回 UNIVERSAL_FALLBACK_LIMITS", async () => {
     getLimitForSource.mockResolvedValue([]);
     getLimitsByProvider.mockRejectedValue(new Error("db read error"));
+    // D4: test-provider 不在默认表中，fail-open 走 getDefaultLimits 通用兜底
     const limits = await getEffectiveLimits("test-provider", "key", "model");
-    expect(limits).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(limits).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
     expect(getLimitsByProvider).toHaveBeenCalled();
     expect(log.warn).toHaveBeenCalled();
   });

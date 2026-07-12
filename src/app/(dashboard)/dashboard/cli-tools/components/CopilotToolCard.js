@@ -290,6 +290,12 @@ export default function CopilotToolCard({ tool, isExpanded, onToggle, baseUrl, a
         </div>
       )}
 
+      {/* B4 Audit: CopilotToolCard uses `selectedModels` as a flat list of distinct models
+          (onSelect has explicit `!selectedModels.includes(model.value)` guard). Multi-model
+          LIST, not multi-model SLOTS — no primary/backup concept where the same model could
+          appear in different roles. allowReuse=true would break toggle-to-deselect UX without
+          enabling real duplication (onSelect guard still prevents it). Conclusion: NO reuse
+          need, no modification. */}
       <ModelSelectModal
         isOpen={modalOpen}
         onClose={() => {

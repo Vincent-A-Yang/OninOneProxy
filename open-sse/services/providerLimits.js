@@ -139,6 +139,16 @@ const DEFAULT_PROVIDER_LIMITS = {
     rateWindows: [{ window: 'minute', count: 60, unit: 'request' }],
     quota: null,
   },
+  // 腾讯混元 (D4: explicit entry for tencent provider)
+  tencent: {
+    rateWindows: [{ window: 'minute', count: 60, unit: 'request' }],
+    quota: null,
+  },
+  // 商汤 SenseNova (D4: explicit entry for sensenova provider)
+  sensenova: {
+    rateWindows: [{ window: 'minute', count: 60, unit: 'request' }],
+    quota: null,
+  },
   // 零一万物
   linyi: {
     rateWindows: [{ window: 'minute', count: 60, unit: 'request' }],
@@ -343,28 +353,49 @@ export async function getEffectiveLimits(provider, apiKey, model) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Universal fallback for unknown providers (D4).
+ *
+ * Applied when DEFAULT_PROVIDER_LIMITS has no matching entry. Provides safe
+ * defaults (60 RPM) so unknown providers still get basic rate-limit protection
+ * instead of unlimited access. TPM tracking is handled by the quota system.
+ */
+const UNIVERSAL_FALLBACK_LIMITS = {
+  rateWindows: [{ window: 'minute', count: 60, unit: 'request' }],
+  quota: null,
+};
+
+/**
  * Look up built-in default limits for a provider.
  *
  * Matching is case-insensitive: 'NVIDIA' / 'nvidia' / 'Nvidia' all hit the
  * 'nvidia' entry. Returns a shallow copy so callers can mutate without
  * affecting the shared DEFAULT_PROVIDER_LIMITS table.
  *
+ * D4: Unknown providers now receive UNIVERSAL_FALLBACK_LIMITS (60 RPM) instead
+ * of null. Explicit entries with rateWindows=null (e.g. ollama) still return
+ * their configured null — only truly unknown providers get the fallback.
+ *
  * Fail-open: any exception returns null, never blocking the caller.
  *
  * @param {string} provider - Provider name (case-insensitive).
  * @returns {{ rateWindows: Array|null, quota: Object|null }|null}
- *   The default limits, or null when the provider has no built-in default
- *   (e.g. unknown provider, or ollama with rateWindows=null).
+ *   The default limits, or null on invalid input / internal error.
  */
 export function getDefaultLimits(provider) {
   try {
     if (!provider || typeof provider !== 'string') return null;
     const key = provider.toLowerCase();
     const entry = DEFAULT_PROVIDER_LIMITS[key];
-    if (!entry) return null;
+    if (entry) {
+      return {
+        rateWindows: entry.rateWindows,
+        quota: entry.quota,
+      };
+    }
+    // D4: Unknown provider — return universal fallback (60 RPM) instead of null.
     return {
-      rateWindows: entry.rateWindows,
-      quota: entry.quota,
+      rateWindows: UNIVERSAL_FALLBACK_LIMITS.rateWindows,
+      quota: UNIVERSAL_FALLBACK_LIMITS.quota,
     };
   } catch (err) {
     log.warn(TAG, `getDefaultLimits failed: ${err?.message || err}`);

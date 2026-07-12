@@ -99,6 +99,19 @@ export async function initializeApp() {
     } catch (e) {
       console.warn("[InitApp] OAuth anti-ban settings sync failed:", e?.message || String(e));
     }
+
+    // Stage C3: hydrate QuotaPool from persisted sources on startup so
+    // rate-limit/TPM windows are pre-aggregated before the first request.
+    // Fail-open: any error here is swallowed so app init never breaks.
+    try {
+      const { loadAllSources } = await import("@/lib/db/repos/quotaPoolRepo");
+      const { hydrateFromRepo } = await import("open-sse/services/quotaPool.js");
+      const sources = await loadAllSources();
+      const stats = hydrateFromRepo(sources);
+      console.log(`[InitApp] QuotaPool hydrated: ${stats.success}/${stats.total} sources`);
+    } catch (e) {
+      console.warn("[InitApp] QuotaPool hydrate failed:", e?.message || String(e));
+    }
   } catch (error) {
     console.error("[InitApp] Error:", error);
   }

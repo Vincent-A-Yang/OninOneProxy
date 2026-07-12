@@ -157,12 +157,16 @@ describe("E1.1 单位换算", () => {
 // E1.2 优先级合并
 // ===========================================================================
 describe("E1.2 getEffectiveLimits 优先级合并", () => {
-  it("无任何配置 → { rateWindows: [], quotaWindows: [], quota: null }", async () => {
+  it("无任何配置 → 返回 UNIVERSAL_FALLBACK_LIMITS (D4: 未知 provider 60 RPM)", async () => {
     getLimitForSource.mockResolvedValue([]);
     getLimitsByProvider.mockResolvedValue([]);
-    // 使用不在 DEFAULT_PROVIDER_LIMITS 表中的 provider，避免内置默认值干扰空配置断言
+    // test-provider 不在 DEFAULT_PROVIDER_LIMITS 表中，D4 后走 UNIVERSAL_FALLBACK_LIMITS
     const result = await getEffectiveLimits("test-provider", "key-12345", "gpt-4o");
-    expect(result).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(result).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
   });
 
   it("仅 provider 全局配置 → 返回该配置", async () => {
@@ -217,7 +221,7 @@ describe("E1.2 getEffectiveLimits 优先级合并", () => {
     expect(result.quota).toEqual({ tokens: 1000000 });
   });
 
-  it("provider 全局 scope !== 'provider' → 跳过", async () => {
+  it("provider 全局 scope !== 'provider' → 跳过后走 UNIVERSAL_FALLBACK_LIMITS (D4)", async () => {
     const providerCfg = {
       enabled: true,
       scope: "source",
@@ -226,9 +230,13 @@ describe("E1.2 getEffectiveLimits 优先级合并", () => {
     };
     getLimitForSource.mockResolvedValue([]);
     getLimitsByProvider.mockResolvedValue([providerCfg]);
-    // test-provider 不在默认表中，确保跳过 scope!=provider 后仍返回空
+    // test-provider 不在默认表中，跳过 scope!=provider 后走 UNIVERSAL_FALLBACK_LIMITS
     const result = await getEffectiveLimits("test-provider", "key-12345", "gpt-4o");
-    expect(result).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(result).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
   });
 
   it("provider 为空字符串 → 直接返回空配置（不查 DB）", async () => {
@@ -238,11 +246,15 @@ describe("E1.2 getEffectiveLimits 优先级合并", () => {
     expect(getLimitsByProvider).not.toHaveBeenCalled();
   });
 
-  it("getLimitForSource 抛异常 → fail-open 返回空配置", async () => {
+  it("getLimitForSource 抛异常 → fail-open 走 UNIVERSAL_FALLBACK_LIMITS (D4)", async () => {
     getLimitForSource.mockRejectedValue(new Error("db down"));
     getLimitsByProvider.mockResolvedValue([]);
     const result = await getEffectiveLimits("test-provider", "key-12345", "gpt-4o");
-    expect(result).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(result).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
   });
 });
 
@@ -570,18 +582,26 @@ describe("E1.7 getEffectiveCooldownSeconds 计算", () => {
 // E1.8 fail-open 容错（5 个失败注入用例）
 // ===========================================================================
 describe("E1.8 fail-open 容错", () => {
-  it("getLimitForSource 抛异常 → getEffectiveLimits 返回空配置", async () => {
+  it("getLimitForSource 抛异常 → getEffectiveLimits 走 UNIVERSAL_FALLBACK_LIMITS (D4)", async () => {
     getLimitForSource.mockRejectedValue(new Error("db down"));
     getLimitsByProvider.mockResolvedValue([]);
     const r = await getEffectiveLimits("test-provider", "key-12345", "gpt-4o");
-    expect(r).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(r).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
   });
 
-  it("getLimitsByProvider 抛异常 → getEffectiveLimits 返回空配置", async () => {
+  it("getLimitsByProvider 抛异常 → getEffectiveLimits 走 UNIVERSAL_FALLBACK_LIMITS (D4)", async () => {
     getLimitForSource.mockResolvedValue([]);
     getLimitsByProvider.mockRejectedValue(new Error("db down"));
     const r = await getEffectiveLimits("test-provider", "key-12345", "gpt-4o");
-    expect(r).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+    expect(r).toEqual({
+      rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+      quotaWindows: [],
+      quota: null,
+    });
   });
 
   it("getSourceWindows 抛异常 → checkRateLimit 返回 allowed=true", () => {

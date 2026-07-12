@@ -32,6 +32,7 @@ export default function ModelSelectModal({
   kindFilter = null,
   addedModelValues = [],
   closeOnSelect = true,
+  allowReuse = false,
 }) {
   // Filter activeProviders by serviceKinds when kindFilter set (e.g. "webSearch", "webFetch")
   const filteredActiveProviders = useMemo(() => {
@@ -391,11 +392,23 @@ export default function ModelSelectModal({
     return filtered;
   }, [groupedModels, searchQuery, addedModelValues]);
 
+  // handleSelect 三分支逻辑（allowReuse 机制）：
+  //   - isAdded && !allowReuse -> onDeselect(model)  维持原去重行为（向后兼容）
+  //   - isAdded && allowReuse  -> onSelect(model)    允许复用已添加模型
+  //   - !isAdded               -> onSelect(model)    正常选择
+  //
+  // 手动验证清单（B1.5）：
+  //   1. allowReuse=false（默认）+ 已添加模型点击 -> 触发 onDeselect（维持原行为）
+  //   2. allowReuse=true + 已添加模型点击 -> 触发 onSelect
+  //   3. allowReuse=true + 未添加模型点击 -> 触发 onSelect
+  //   4. allowReuse 未传 -> 等同 false（向后兼容）
+  // 视觉标记（B1.3）：已添加模型仍显示 "已添加" badge（check 图标 + bg-primary 样式），
+  //   但 button 无 disabled 属性，点击不被禁用。allowReuse=true 时用户可点击已添加模型触发 onSelect。
   const handleSelect = (model) => {
     const value = model?.value || model?.name || model;
     const isAdded = addedModelValues.includes(value);
 
-    if (isAdded && onDeselect) {
+    if (isAdded && !allowReuse && onDeselect) {
       onDeselect(model);
     } else {
       onSelect(model);
@@ -578,4 +591,5 @@ ModelSelectModal.propTypes = {
   kindFilter: PropTypes.string,
   addedModelValues: PropTypes.arrayOf(PropTypes.string),
   closeOnSelect: PropTypes.bool,
+  allowReuse: PropTypes.bool,
 };

@@ -2,7 +2,7 @@
  * Shared combo (model combo) handling with fallback support
  */
 
-import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
+import { formatRetryAfter } from "./accountFallback.js";
 import { unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
@@ -12,7 +12,10 @@ import {
   registerSource,
   isCooling,
   recordUsage,
+  coolDown,
 } from "./quotaPool.js";
+// D2/D3: Unified error analyzer — replaces checkFallbackError on combo/fusion paths
+import { analyzeError } from "./errorAnalyzer.js";
 import { getSettings } from "@/lib/localDb";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
@@ -335,8 +338,22 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         try { errorText = JSON.stringify(errorText); } catch { errorText = String(errorText); }
       }
 
-      // Check if should fallback to next model
-      const { shouldFallback, cooldownMs } = checkFallbackError(result.status, errorText);
+      // D3.1: analyzeError replaces checkFallbackError (unified F5 error handling)
+      const slashIdx = modelStr.indexOf("/");
+      const providerHint = slashIdx > 0 ? modelStr.slice(0, slashIdx) : "";
+      const analyzeResult = analyzeError(result.status, errorText, result.headers || {}, providerHint);
+      const shouldFallback = !["fail"].includes(analyzeResult.strategy);
+      const cooldownMs = analyzeResult.coolDownSeconds * 1000;
+
+      // D3.4: Integrate quotaPool cooldown (fail-open, reuses f5SourceId from above)
+      if (f5Enabled && f5SourceId && analyzeResult.strategy === "cool_down_seconds" && analyzeResult.coolDownSeconds > 0) {
+        try {
+          coolDown(f5SourceId, analyzeResult.coolDownSeconds, analyzeResult.reason);
+          log.info("COMBO", `Model ${modelStr} cooled down ${analyzeResult.coolDownSeconds}s (${analyzeResult.reason})`);
+        } catch (e) {
+          log.warn("COMBO", `quotaPool coolDown failed: ${e?.message || String(e)}`);
+        }
+      }
 
       if (!shouldFallback) {
         log.warn("COMBO", `Model ${modelStr} failed (no fallback)`, { status: result.status });
@@ -532,8 +549,33 @@ const JUDGE_ROLE_PREFIXES = {
 
 // Resolve a model's role prompt. Returns "" (empty) for unroleed/generalist,
 // so the caller can skip the system-message injection entirely.
-function getRolePrompt(roles, modelStr) {
-  if (!roles || typeof roles !== "object") return "";
+//
+// Dual-schema support (fix-fusion-roles-backup-reuse-quotapool-tpm):
+// - Object format `{modelStr: role}` — canonical backend contract (preferred).
+// - Array format `Array<string>` — legacy frontend storage, indexed by slot.
+//   When `roles` is an array, `comboModels` (the slot primary model strings)
+//   MUST be passed so the function can resolve `modelStr` to a slot index via
+//   `comboModels.indexOf(modelStr)`. If `comboModels` is missing/empty, the
+//   function returns "" and emits a warning (cannot resolve index).
+export function getRolePrompt(roles, modelStr, comboModels) {
+  if (!roles) return "";
+
+  // Array format: Array<string> indexed by slot position.
+  if (Array.isArray(roles)) {
+    if (!Array.isArray(comboModels) || comboModels.length === 0) {
+      console.warn("[getRolePrompt] Array-format roles provided but comboModels is empty/missing; cannot resolve index for modelStr:", modelStr);
+      return "";
+    }
+    const index = comboModels.indexOf(modelStr);
+    if (index < 0 || index >= roles.length) return "";
+    const role = roles[index];
+    if (typeof role !== "string" || !role) return "";
+    const prompt = ROLE_PROMPTS[role];
+    return typeof prompt === "string" ? prompt : "";
+  }
+
+  // Object format: {modelStr: role} (canonical backend contract).
+  if (typeof roles !== "object") return "";
   const role = roles[modelStr];
   if (typeof role !== "string" || !role) return "";
   const prompt = ROLE_PROMPTS[role];
@@ -680,7 +722,10 @@ function runWithConcurrency(slots, maxConcurrency, runner) {
  */
 async function withFailover(slot, panelBody, handleSingleModel, cfg, log) {
   // tryModel: invoke one model and normalize its outcome.
-  // Returns { ok: true, response, text } on success, or { ok: false, reason } on any failure.
+  // Returns { ok: true, response, text } on success, or
+  // { ok: false, reason, status?, bodyText?, headers? } on any failure.
+  // D2.4: failure results now carry status/bodyText/headers so the caller
+  // can run analyzeError on the primary failure to decide cooldown/switch.
   const tryModel = async (modelStr) => {
     let res;
     try {
@@ -690,7 +735,18 @@ async function withFailover(slot, panelBody, handleSingleModel, cfg, log) {
     }
     if (!res || res.__timeout) return { ok: false, reason: "timeout" };
     if (res.__error) return { ok: false, reason: `error:${res.__error?.message || String(res.__error)}` };
-    if (!res.ok) return { ok: false, reason: `status_${res.status}` };
+    if (!res.ok) {
+      // D2.4: Capture status/bodyText/headers for analyzeError (fail-open on read errors).
+      let bodyText = "";
+      try { bodyText = await res.clone().text(); } catch { /* ignore */ }
+      return {
+        ok: false,
+        reason: `status_${res.status}`,
+        status: res.status,
+        bodyText,
+        headers: res.headers || {},
+      };
+    }
     // Validate the body is parseable and has non-empty content.
     try {
       const json = await res.clone().json();
@@ -708,13 +764,55 @@ async function withFailover(slot, panelBody, handleSingleModel, cfg, log) {
     return { ...primaryResult, model: slot.primary, usedBackup: false };
   }
 
+  // D2.2: Analyze primary failure and apply quotaPool cooldown (fail-open).
+  //   analyzeError classifies the error and picks a recovery strategy. When
+  //   the strategy is cool_down_seconds, we cool down the primary source so
+  //   future panel calls skip it. When the strategy is "fail", we skip the
+  //   backup (error is non-recoverable). If analyzeError throws, we degrade
+  //   to unconditional failover (the original behavior).
+  let skipBackup = false;
+  try {
+    const slashIdx = slot.primary.indexOf("/");
+    const providerHint = slashIdx > 0 ? slot.primary.slice(0, slashIdx) : "";
+    const analyzeResult = analyzeError(
+      primaryResult.status || 0,
+      primaryResult.bodyText || "",
+      primaryResult.headers || {},
+      providerHint
+    );
+    // Apply cooldown to the primary source via quotaPool (fail-open).
+    if (analyzeResult.strategy === "cool_down_seconds" && analyzeResult.coolDownSeconds > 0) {
+      try {
+        const p = slashIdx > 0 ? slot.primary.slice(0, slashIdx) : "";
+        const m = slashIdx > 0 ? slot.primary.slice(slashIdx + 1) : slot.primary;
+        const f5Lid = getLogicalModelId("", cfg.comboName || "");
+        const sid = registerSource(f5Lid, { provider: p, apiKey: "", model: m });
+        if (sid) coolDown(sid, analyzeResult.coolDownSeconds, analyzeResult.reason);
+        log.info("FUSION", `Panel primary ${slot.primary} cooled down ${analyzeResult.coolDownSeconds}s (${analyzeResult.reason})`);
+      } catch (e) {
+        log.warn("FUSION", `quotaPool cooldown failed: ${e?.message || String(e)}`);
+      }
+    }
+    // "fail" strategy means the error is non-recoverable — don't try backup.
+    if (analyzeResult.strategy === "fail") {
+      skipBackup = true;
+    }
+  } catch (e) {
+    // Fail-open: analyzeError threw — degrade to unconditional failover.
+    log.warn("FUSION", `analyzeError threw on primary failure: ${e?.message || String(e)} (degrading to unconditional failover)`);
+  }
+
   // 2. No backup configured — surface primary's failure as the slot's failure.
   if (!slot.backup) {
     log.warn("FUSION", `Panel primary ${slot.primary} failed (${primaryResult.reason}), no backup`);
     return { ...primaryResult, model: slot.primary, usedBackup: false };
   }
 
-  // 3. Failover to backup
+  // 3. Failover to backup (unless analyzeError said "fail")
+  if (skipBackup) {
+    log.warn("FUSION", `Panel primary ${slot.primary} failed (${primaryResult.reason}), skipBackup (fail strategy)`);
+    return { ...primaryResult, model: slot.primary, usedBackup: false };
+  }
   log.warn("FUSION", `Panel primary ${slot.primary} failed (${primaryResult.reason}), trying backup ${slot.backup}`);
   const backupResult = await tryModel(slot.backup);
   if (backupResult.ok) {
@@ -758,7 +856,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     );
   }
 
-  const cfg = { ...FUSION_DEFAULTS, ...(tuning || {}) };
+  const cfg = { ...FUSION_DEFAULTS, ...(tuning || {}), comboName };
   // If failover is explicitly disabled (settings.fusionFailoverEnabled === false),
   // strip backups so every slot behaves like the original single-model call.
   if (cfg.disableFailover === true) {
@@ -829,7 +927,9 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     normalized,
     cfg.maxPanelConcurrency,
     (slot) => {
-      const rolePrompt = getRolePrompt(roles, slot.primary);
+      // Pass comboModels (slot primary strings) so getRolePrompt can resolve
+      // array-format roles via indexOf. Object-format roles ignore it.
+      const rolePrompt = getRolePrompt(roles, slot.primary, normalized.map(s => s.primary));
       // Only clone when a role prompt exists; otherwise reuse the shared
       // panelBody (identical to the original Fusion behavior).
       const slotBody = rolePrompt ? buildPanelBodyWithRole(panelBody, rolePrompt) : panelBody;

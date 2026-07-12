@@ -80,11 +80,15 @@ describe("E1.3 DEFAULT_PROVIDER_LIMITS 应用", () => {
       expect(r.quota).toBeNull();
     });
 
-    it("未知 provider → 返回空配置（无默认值）", async () => {
+    it("未知 provider → 返回 UNIVERSAL_FALLBACK_LIMITS (D4: 60 RPM 默认限流)", async () => {
       getLimitForSource.mockResolvedValue([]);
       getLimitsByProvider.mockResolvedValue([]);
       const r = await getEffectiveLimits("some-unknown-provider", "key", "m");
-      expect(r).toEqual({ rateWindows: [], quotaWindows: [], quota: null });
+      expect(r).toEqual({
+        rateWindows: [{ window: "minute", count: 60, unit: "request" }],
+        quotaWindows: [],
+        quota: null,
+      });
     });
 
     it("显式 source 级配置优先于内置默认值", async () => {
@@ -145,9 +149,14 @@ describe("E1.3 DEFAULT_PROVIDER_LIMITS 应用", () => {
   });
 
   describe("getDefaultLimits 边界与 fail-open", () => {
-    it("未知 provider 返回 null", () => {
-      expect(getDefaultLimits("nonexistent")).toBeNull();
-      expect(getDefaultLimits("custom-llm")).toBeNull();
+    it("未知 provider 返回 UNIVERSAL_FALLBACK_LIMITS (D4: 非 null)", () => {
+      const fallback = getDefaultLimits("nonexistent");
+      expect(fallback).not.toBeNull();
+      expect(fallback.rateWindows).toEqual([{ window: "minute", count: 60, unit: "request" }]);
+      expect(fallback.quota).toBeNull();
+      // custom-llm 同样走 UNIVERSAL_FALLBACK_LIMITS
+      const custom = getDefaultLimits("custom-llm");
+      expect(custom).toEqual(fallback);
     });
 
     it("空字符串返回 null", () => {

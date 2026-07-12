@@ -120,3 +120,166 @@ export async function clearAllSourceStates() {
   const db = await getAdapter();
   db.run(`DELETE FROM kv WHERE scope = ?`, [SCOPE]);
 }
+
+// ---------------------------------------------------------------------------
+// QuotaPool Sources table (startup pre-aggregation persistence)
+// ---------------------------------------------------------------------------
+// The `quota_pool_sources` table stores source registration metadata so that
+// the in-memory pool can be rehydrated on process restart. Only the MASKED
+// api key is stored (never plaintext). The `kv`-scoped state above continues
+// to hold runtime state (cooldowns, counters); this table holds the static
+// registration metadata (provider, model, limits).
+
+/**
+ * Mask an API key for persistent storage.
+ * Format: keep first 4 + last 4 chars, replace middle with "***".
+ *   "sk-1-real-key-abcd" → "sk-1***abcd"
+ *   Short keys (≤8 chars) → "***" (full mask for safety)
+ *   Empty/null → ""
+ *
+ * Note: This is intentionally different from quotaPool.maskKey (which uses
+ * "…" as separator). Double-masking is safe: maskKey(maskApiKeyForStorage(k))
+ * produces the same result as maskKey(k) because both only preserve first4 +
+ * last4. This means a source hydrated from the masked storage value gets the
+ * same sourceId as the runtime-registered source with the real key, so
+ * runtime registerSource (idempotent) will update the hydrated entry in place.
+ *
+ * @param {string} key
+ * @returns {string}
+ */
+function maskApiKeyForStorage(key) {
+  if (!key) return "";
+  const str = String(key);
+  if (str.length <= 8) return "***";
+  return `${str.slice(0, 4)}***${str.slice(-4)}`;
+}
+
+/**
+ * Ensure the quota_pool_sources table exists. Idempotent + fail-open.
+ * @param {object} db - DB adapter (from getAdapter())
+ */
+export function ensureSourcesTable(db) {
+  try {
+    if (!db) return;
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS quota_pool_sources (
+        source_id TEXT PRIMARY KEY,
+        logical_id TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        api_key_mask TEXT NOT NULL,
+        model TEXT NOT NULL,
+        rpm_limit INTEGER,
+        tpm_limit INTEGER,
+        enabled INTEGER DEFAULT 1,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+  } catch (e) {
+    // fail-open: table creation failure does not block the app
+    console.warn(`[quotaPoolRepo] ensureSourcesTable failed: ${e?.message || String(e)}`);
+  }
+}
+
+// Lazy table-init flag. The table is created on first access (fire-and-forget
+// at module load) and re-checked defensively inside loadAllSources/upsertSource.
+let _sourcesTableEnsured = false;
+
+async function ensureSourcesTableOnce() {
+  if (_sourcesTableEnsured) return;
+  try {
+    const db = await getAdapter();
+    ensureSourcesTable(db);
+    _sourcesTableEnsured = true;
+  } catch (e) {
+    // fail-open: don't throw, allow retry on next call
+    console.warn(`[quotaPoolRepo] ensureSourcesTableOnce init failed: ${e?.message || String(e)}`);
+  }
+}
+
+// Auto-init at module load (fire-and-forget, fail-open). Per C1.4.
+ensureSourcesTableOnce();
+
+/**
+ * Load all enabled sources from the quota_pool_sources table.
+ *
+ * Returns an array of source objects suitable for passing to
+ * quotaPool.hydrateFromRepo(). The `apiKey` field contains the stored
+ * api_key_mask (masked) — NOT the plaintext key. This is by design: the
+ * quotaPool's maskKey() only preserves first4+last4, so the sourceId
+ * computed from the masked value matches the sourceId from the real key.
+ * Runtime registerSource (triggered by real provider config) will update
+ * the hydrated entry in place with the real key.
+ *
+ * Fail-open: any error → returns empty array (pool degrades to empty,
+ * original routing behavior preserved).
+ *
+ * @returns {Promise<Array<{sourceId: string, logicalId: string, provider: string, apiKey: string, model: string, rpmLimit: number|null, tpmLimit: number|null}>>}
+ */
+export async function loadAllSources() {
+  try {
+    await ensureSourcesTableOnce();
+    const db = await getAdapter();
+    const rows = db.all(
+      `SELECT source_id, logical_id, provider, api_key_mask, model, rpm_limit, tpm_limit
+       FROM quota_pool_sources
+       WHERE enabled = 1`
+    );
+    return rows.map((r) => ({
+      sourceId: r.source_id,
+      logicalId: r.logical_id,
+      provider: r.provider,
+      apiKey: r.api_key_mask,
+      model: r.model,
+      rpmLimit: r.rpm_limit != null ? Number(r.rpm_limit) : null,
+      tpmLimit: r.tpm_limit != null ? Number(r.tpm_limit) : null,
+    }));
+  } catch (e) {
+    // fail-open: return empty array on any error
+    console.warn(`[quotaPoolRepo] loadAllSources failed: ${e?.message || String(e)}`);
+    return [];
+  }
+}
+
+/**
+ * Upsert a source into quota_pool_sources for runtime persistence.
+ *
+ * The apiKey is masked before storage (api_key_mask column) — plaintext
+ * keys are NEVER persisted. Fail-open: persistence failure does not block
+ * in-memory registration.
+ *
+ * @param {{sourceId: string, logicalId: string, provider: string, apiKey: string, model: string, rpmLimit?: number, tpmLimit?: number}} source
+ */
+export async function upsertSource(source) {
+  try {
+    if (!source || !source.sourceId) return;
+    await ensureSourcesTableOnce();
+    const db = await getAdapter();
+    const apiKeyMask = maskApiKeyForStorage(source.apiKey);
+    db.run(
+      `INSERT INTO quota_pool_sources(source_id, logical_id, provider, api_key_mask, model, rpm_limit, tpm_limit, enabled, updated_at)
+       VALUES(?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+       ON CONFLICT(source_id) DO UPDATE SET
+         logical_id = excluded.logical_id,
+         provider = excluded.provider,
+         api_key_mask = excluded.api_key_mask,
+         model = excluded.model,
+         rpm_limit = excluded.rpm_limit,
+         tpm_limit = excluded.tpm_limit,
+         enabled = 1,
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        source.sourceId,
+        source.logicalId || "",
+        source.provider || "",
+        apiKeyMask,
+        source.model || "",
+        Number.isFinite(source.rpmLimit) ? source.rpmLimit : null,
+        Number.isFinite(source.tpmLimit) ? source.tpmLimit : null,
+      ]
+    );
+  } catch (e) {
+    // fail-open: persistence failure does not block in-memory registration
+    console.warn(`[quotaPoolRepo] upsertSource failed: ${e?.message || String(e)}`);
+  }
+}

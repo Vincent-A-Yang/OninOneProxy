@@ -18,6 +18,7 @@
  *   - getLogicalModels()
  *   - recordUsage(sourceId, { tokens, cost, success })
  *   - clearAll()                      (used by tests + reset)
+ *   - hydrateFromRepo(sources)        → { total, success, failed } (startup pre-aggregation)
  *
  * Fail-open contract:
  *   Any internal exception is swallowed and surfaces as a null / empty result
@@ -73,6 +74,18 @@ const logicalIndex = new Map();
 
 /** @type {Map<string, { logicalId: string, provider: string, model: string }>} sourceId → meta (for fast lookup even after unregister) */
 const sourceMeta = new Map();
+
+// ---------------------------------------------------------------------------
+// Lazy import of quotaPoolRepo.upsertSource (runtime persistence)
+// ---------------------------------------------------------------------------
+// Dynamic import avoids circular deps and prevents test environments without
+// a DB from crashing on module load. The import resolves once at startup;
+// if it fails, _upsertSource stays null and persistence is silently skipped
+// (fail-open contract: the in-memory pool works without persistence).
+let _upsertSource = null;
+const _repoImportPromise = import("@/lib/db/repos/quotaPoolRepo")
+  .then((repo) => { _upsertSource = repo.upsertSource || null; })
+  .catch(() => { /* fail-open: persistence unavailable */ });
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -295,6 +308,37 @@ export function getLogicalModelId(modelStr, comboName = "") {
 // ---------------------------------------------------------------------------
 
 /**
+ * Fire-and-forget persistence helper for registerSource.
+ *
+ * Forwards the registration to quotaPoolRepo.upsertSource (if available) so
+ * the source survives process restarts. Fail-open: any error is swallowed
+ * and in-memory registration still succeeds. The async upsert runs detached
+ * so the synchronous registerSource path is not blocked on disk I/O.
+ *
+ * @param {string} sourceId
+ * @param {string} logicalId
+ * @param {string} provider
+ * @param {string} apiKey   - Plaintext key (masked inside upsertSource before storage)
+ * @param {string} model
+ * @param {number} rpmLimit
+ * @param {number} tpmLimit
+ */
+function persistSourceRegistration(sourceId, logicalId, provider, apiKey, model, rpmLimit, tpmLimit) {
+  try {
+    if (!_upsertSource) return;  // repo not loaded (test env / import failed) → fail-open
+    _upsertSource({
+      sourceId,
+      logicalId,
+      provider,
+      apiKey,
+      model,
+      rpmLimit,
+      tpmLimit,
+    }).catch(() => { /* fail-open: persistence error does not block runtime */ });
+  } catch { /* fail-open */ }
+}
+
+/**
  * Register a physical source under a logical model.
  *
  * Idempotent: re-registering the same {provider, apiKey, model} updates the
@@ -390,6 +434,8 @@ export function registerSource(logicalId, source) {
         attachToLogical(logicalId, sourceId);
         existing.logicalId = logicalId;
       }
+      // Persist update to SQLite (fire-and-forget, fail-open).
+      persistSourceRegistration(sourceId, logicalId, provider, apiKey, model, rpmLimit, tpmLimit);
       return sourceId;
     }
 
@@ -417,6 +463,8 @@ export function registerSource(logicalId, source) {
     sourcesById.set(sourceId, state);
     attachToLogical(logicalId, sourceId);
     sourceMeta.set(sourceId, { logicalId, provider, model });
+    // Persist new registration to SQLite (fire-and-forget, fail-open).
+    persistSourceRegistration(sourceId, logicalId, provider, apiKey, model, rpmLimit, tpmLimit);
     return sourceId;
   } catch {
     return "";
@@ -881,6 +929,65 @@ export function clearAll() {
     logicalIndex.clear();
     sourceMeta.clear();
   } catch { /* fail-open */ }
+}
+
+// ---------------------------------------------------------------------------
+// Startup pre-aggregation: hydrate pool from persisted repo state
+// ---------------------------------------------------------------------------
+// hydrateFromRepo takes the array of sources returned by
+// quotaPoolRepo.loadAllSources() and re-registers them into the in-memory
+// pool. This is invoked once at process startup (e.g. from initializeApp)
+// so that cooldowns and rate counters can continue from where they left off
+// after a restart.
+//
+// Fail-open contract: a single source failing to register does NOT block
+// the others — the failure is counted and the loop continues. The returned
+// {total, success, failed} summary lets the caller log the result.
+//
+// Note: the apiKey field from loadAllSources() is the MASKED value (plaintext
+// keys are never persisted). registerSource calls makeSourceId(provider,
+// apiKey, model) which applies maskKey() again. Because maskKey preserves
+// only first4+last4, maskKey(maskApiKeyForStorage(k)) === maskKey(k), so the
+// hydrated source gets the SAME sourceId as a runtime-registered source
+// with the real key. When the real provider config loads later and calls
+// registerSource with the plaintext key, the idempotent update path kicks
+// in and replaces the masked-key entry in place (existing branch).
+
+/**
+ * Hydrate the in-memory pool from persisted source metadata.
+ *
+ * @param {Array<{sourceId: string, logicalId: string, provider: string, apiKey: string, model: string, rpmLimit?: number|null, tpmLimit?: number|null}>} sources
+ * @returns {{total: number, success: number, failed: number}}
+ */
+export function hydrateFromRepo(sources) {
+  const total = Array.isArray(sources) ? sources.length : 0;
+  let success = 0;
+  let failed = 0;
+  if (!Array.isArray(sources)) {
+    return { total: 0, success: 0, failed: 0 };
+  }
+  for (const source of sources) {
+    try {
+      if (!source || !source.logicalId) {
+        failed++;
+        console.warn("[quotaPool] hydrateFromRepo: skipping source without logicalId");
+        continue;
+      }
+      const id = registerSource(source.logicalId, {
+        provider: source.provider || "",
+        apiKey: source.apiKey || "",
+        model: source.model || "",
+        rpmLimit: source.rpmLimit,
+        tpmLimit: source.tpmLimit,
+      });
+      if (id) success++;
+      else failed++;
+    } catch (e) {
+      failed++;
+      console.warn(`[quotaPool] hydrateFromRepo: failed to register source: ${e?.message || String(e)}`);
+    }
+  }
+  return { total, success, failed };
 }
 
 // ---------------------------------------------------------------------------

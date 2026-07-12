@@ -229,6 +229,57 @@ const STATUS_FALLBACK = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Generic body-text patterns (provider-agnostic)
+// ---------------------------------------------------------------------------
+// Applied AFTER provider-specific matching but BEFORE status-code fallback.
+// These catch common rate-limit / overload phrasing used across providers
+// that don't have a dedicated PROVIDER_PATTERNS entry (e.g. tencent,
+// sensenova, minimax, zhipu, bytedance, etc.). Matching is case-insensitive
+// substring on the response body text.
+const GENERIC_PATTERNS = [
+  {
+    text: "tpm limit",
+    category: "rate_limit",
+    strategy: "cool_down_seconds",
+    coolDownSeconds: 60,
+    switchTarget: "key",
+    reason: "Generic: TPM limit",
+  },
+  {
+    text: "rpm limit",
+    category: "rate_limit",
+    strategy: "cool_down_seconds",
+    coolDownSeconds: 60,
+    switchTarget: "key",
+    reason: "Generic: RPM limit",
+  },
+  {
+    text: "request rate exceeds",
+    category: "rate_limit",
+    strategy: "cool_down_seconds",
+    coolDownSeconds: 60,
+    switchTarget: "key",
+    reason: "Generic: request rate exceeds",
+  },
+  {
+    text: "rate limit exceeded",
+    category: "rate_limit",
+    strategy: "cool_down_seconds",
+    coolDownSeconds: 60,
+    switchTarget: "key",
+    reason: "Generic: rate limit exceeded",
+  },
+  {
+    text: "overloaded",
+    category: "overloaded",
+    strategy: "cool_down_seconds",
+    coolDownSeconds: 30,
+    switchTarget: "key",
+    reason: "Generic: overloaded",
+  },
+];
+
 function fallbackByStatus(status) {
   return STATUS_FALLBACK[status] || null;
 }
@@ -303,7 +354,19 @@ export function analyzeError(statusCode, bodyText, headers = {}, providerHint = 
       }
     }
 
-    // 2. Generic status-code fallback.
+    // 2. Generic body-text pattern match (provider-agnostic).
+    //    Catches common rate-limit / overload phrasing for providers without
+    //    a dedicated PROVIDER_PATTERNS entry (tencent, sensenova, minimax, etc.).
+    for (const p of GENERIC_PATTERNS) {
+      if (p.text && lower.includes(p.text.toLowerCase())) {
+        const retryAfter = pickRetryAfter(headers);
+        const coolDownSeconds =
+          retryAfter > 0 ? retryAfter : p.coolDownSeconds || 0;
+        return finalize(p, coolDownSeconds);
+      }
+    }
+
+    // 3. Generic status-code fallback.
     const fallback = fallbackByStatus(status);
     if (fallback) {
       const retryAfter = pickRetryAfter(headers);
@@ -392,6 +455,7 @@ export function isProviderLimitsCooldown(reason) {
 // Exported for unit tests and tooling.
 export const __test = {
   PROVIDER_PATTERNS,
+  GENERIC_PATTERNS,
   STATUS_FALLBACK,
   normalizeProvider,
   generic5xx,

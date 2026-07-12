@@ -393,6 +393,11 @@ export default function ComboDetailPage() {
         )}
       </Card>
 
+      {/* B3 Audit: media-providers combo uses `providers` as a simple string[] (sequential
+          fallback or round-robin). No primary/backup slot concept, so no model reuse need.
+          `allowReuse` is not passed (defaults to false) — clicking an already-added model
+          triggers onDeselect (toggle-off), which is the desired dedup behavior. The handler
+          `handleAddModel` also has an explicit `providers.includes(value)` guard. No modification. */}
       <ModelSelectModal
         isOpen={showPicker}
         onClose={() => setShowPicker(false)}

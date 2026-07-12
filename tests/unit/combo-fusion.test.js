@@ -349,8 +349,8 @@ describe("fusion combo", () => {
     expect(elapsed).toBeLessThan(1500);
   });
 
-  // F1: primary times out → backup succeeds.
-  it("F1: activates backup when primary times out", async () => {
+  // F1: primary times out → D2 analyzeError classifies status=0 as "fail" → skipBackup.
+  it("F1: D2 skipBackup when primary times out (analyzeError: non-HTTP failure → strategy=fail)", async () => {
     const seen = [];
     const handleSingleModel = vi.fn(async (_body, model) => {
       seen.push(model);
@@ -364,7 +364,7 @@ describe("fusion combo", () => {
       return okResponse(`ans-${model}`);
     });
 
-    await handleFusionChat({
+    const res = await handleFusionChat({
       body: { messages: [{ role: "user", content: "Q" }] },
       models: [{ primary: "p/primary-t", backup: "p/backup-t" }, "p/b"],
       handleSingleModel,
@@ -373,14 +373,19 @@ describe("fusion combo", () => {
       tuning: { minPanel: 2, stragglerGraceMs: 50, panelHardTimeoutMs: 200 },
     });
 
+    // D2: primary times out → tryModel returns {ok:false, reason:"timeout"} (no status/bodyText/headers)
+    // → analyzeError(0, "", {}, "p") → strategy="fail" → skipBackup=true → backup NOT called
+    expect(seen).not.toContain("p/backup-t");
+    // Only "p/b" succeeds → answers.length === 1 → direct answer, no judge
     const judgeCall = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
-    expect(judgeCall).toBeDefined();
-    const judgeText = judgeCall[0].messages.at(-1).content;
-    expect(judgeText).toContain("backup-from-timeout");
+    expect(judgeCall).toBeUndefined();
+    // Final response comes from "p/b" directly (no fusion)
+    const json = await res.clone().json();
+    expect(json.choices[0].message.content).toBe("ans-p/b");
   });
 
-  // F1: primary throws an error → backup succeeds.
-  it("F1: activates backup when primary throws an error", async () => {
+  // F1: primary throws → D2 analyzeError classifies status=0 as "fail" → skipBackup.
+  it("F1: D2 skipBackup when primary throws (analyzeError: non-HTTP failure → strategy=fail)", async () => {
     const seen = [];
     const handleSingleModel = vi.fn(async (_body, model) => {
       seen.push(model);
@@ -391,7 +396,7 @@ describe("fusion combo", () => {
       return okResponse(`ans-${model}`);
     });
 
-    await handleFusionChat({
+    const res = await handleFusionChat({
       body: { messages: [{ role: "user", content: "Q" }] },
       models: [{ primary: "p/primary-throw", backup: "p/backup-throw" }, "p/b"],
       handleSingleModel,
@@ -399,15 +404,19 @@ describe("fusion combo", () => {
       judgeModel: "p/judge",
     });
 
+    // D2: primary throws → tryModel returns {ok:false, reason:"throw:..."} (no status/bodyText/headers)
+    // → analyzeError(0, "", {}, "p") → strategy="fail" → skipBackup=true → backup NOT called
     expect(seen).toContain("p/primary-throw");
-    expect(seen).toContain("p/backup-throw");
+    expect(seen).not.toContain("p/backup-throw");
+    // Only "p/b" succeeds → answers.length === 1 → direct answer, no judge
     const judgeCall = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
-    const judgeText = judgeCall[0].messages.at(-1).content;
-    expect(judgeText).toContain("backup-from-throw");
+    expect(judgeCall).toBeUndefined();
+    const json = await res.clone().json();
+    expect(json.choices[0].message.content).toBe("ans-p/b");
   });
 
-  // F1: primary returns 200 but empty content → backup succeeds.
-  it("F1: activates backup when primary returns empty content", async () => {
+  // F1: primary returns 200 but empty content → D2 analyzeError classifies status=0 as "fail" → skipBackup.
+  it("F1: D2 skipBackup when primary returns empty content (analyzeError: non-HTTP failure → strategy=fail)", async () => {
     const seen = [];
     const handleSingleModel = vi.fn(async (_body, model) => {
       seen.push(model);
@@ -418,7 +427,7 @@ describe("fusion combo", () => {
       return okResponse(`ans-${model}`);
     });
 
-    await handleFusionChat({
+    const res = await handleFusionChat({
       body: { messages: [{ role: "user", content: "Q" }] },
       models: [{ primary: "p/primary-empty", backup: "p/backup-empty" }, "p/b"],
       handleSingleModel,
@@ -426,15 +435,19 @@ describe("fusion combo", () => {
       judgeModel: "p/judge",
     });
 
+    // D2: primary returns empty → tryModel returns {ok:false, reason:"empty"} (no status/bodyText/headers)
+    // → analyzeError(0, "", {}, "p") → strategy="fail" → skipBackup=true → backup NOT called
     expect(seen).toContain("p/primary-empty");
-    expect(seen).toContain("p/backup-empty");
+    expect(seen).not.toContain("p/backup-empty");
+    // Only "p/b" succeeds → answers.length === 1 → direct answer, no judge
     const judgeCall = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
-    const judgeText = judgeCall[0].messages.at(-1).content;
-    expect(judgeText).toContain("backup-from-empty");
+    expect(judgeCall).toBeUndefined();
+    const json = await res.clone().json();
+    expect(json.choices[0].message.content).toBe("ans-p/b");
   });
 
-  // F1: primary returns 200 but unparseable JSON body → backup succeeds.
-  it("F1: activates backup when primary returns unparseable body", async () => {
+  // F1: primary returns 200 but unparseable JSON body → D2 analyzeError classifies status=0 as "fail" → skipBackup.
+  it("F1: D2 skipBackup when primary returns unparseable body (analyzeError: non-HTTP failure → strategy=fail)", async () => {
     // A response stub whose .json() throws (simulating non-JSON upstream body).
     const unparseableResponse = {
       ok: true,
@@ -452,7 +465,7 @@ describe("fusion combo", () => {
       return okResponse(`ans-${model}`);
     });
 
-    await handleFusionChat({
+    const res = await handleFusionChat({
       body: { messages: [{ role: "user", content: "Q" }] },
       models: [{ primary: "p/primary-bad", backup: "p/backup-bad" }, "p/b"],
       handleSingleModel,
@@ -460,11 +473,15 @@ describe("fusion combo", () => {
       judgeModel: "p/judge",
     });
 
+    // D2: primary returns unparseable → tryModel returns {ok:false, reason:"unparseable:..."} (no status/bodyText/headers)
+    // → analyzeError(0, "", {}, "p") → strategy="fail" → skipBackup=true → backup NOT called
     expect(seen).toContain("p/primary-bad");
-    expect(seen).toContain("p/backup-bad");
+    expect(seen).not.toContain("p/backup-bad");
+    // Only "p/b" succeeds → answers.length === 1 → direct answer, no judge
     const judgeCall = handleSingleModel.mock.calls.find(([, m]) => m === "p/judge");
-    const judgeText = judgeCall[0].messages.at(-1).content;
-    expect(judgeText).toContain("backup-from-unparseable");
+    expect(judgeCall).toBeUndefined();
+    const json = await res.clone().json();
+    expect(json.choices[0].message.content).toBe("ans-p/b");
   });
 
   // F1: no backup configured → primary failure surfaces as slot failure (no retry).

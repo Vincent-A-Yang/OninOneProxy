@@ -276,6 +276,8 @@ export default function CombosPage() {
         onClose={() => setEditingCombo(null)}
         onSave={(data) => handleUpdate(editingCombo.id, data)}
         activeProviders={activeProviders}
+        strategy={comboStrategies[editingCombo?.name] || {}}
+        onSetStrategy={(patch) => handleSetComboStrategy(editingCombo?.name, patch)}
       />
 
       {/* Confirm Delete Modal */}
@@ -324,8 +326,11 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
   const isFusion = current === "fusion";
 
   // F-RT: Fusion role tuning — panel roles + judge role variant
+  // Roles are stored as {modelStr: role} object (canonical backend contract).
+  // Legacy array-format roles are tolerated by the backend (getRolePrompt dual-schema),
+  // but the frontend always writes the object format.
   const fusionTuning = strategy.fusionTuning || {};
-  const panelRoles = Array.isArray(fusionTuning.roles) ? fusionTuning.roles : [];
+  const panelRoles = fusionTuning.roles && typeof fusionTuning.roles === "object" && !Array.isArray(fusionTuning.roles) ? fusionTuning.roles : {};
   const judgeRole = fusionTuning.judgeRole || "";
 
   // F-RT: Patch fusionTuning while preserving existing fields
@@ -333,12 +338,14 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
     onSetStrategy({ fusionTuning: { ...fusionTuning, ...patch } });
   };
 
-  // F-RT: Update a single panel slot's role (index aligned with combo.models)
+  // F-RT: Update a single panel slot's role. Keyed by the slot's primary model
+  // string (not array index) so the mapping survives model reordering and
+  // matches the backend's {modelStr: role} contract.
   const handleSetPanelRole = (index, role) => {
-    const next = [...panelRoles];
-    while (next.length < models.length) next.push("");
-    next[index] = role;
-    handleSetFusionTuning({ roles: next });
+    const rawModel = models[index];
+    const modelStr = typeof rawModel === "string" ? rawModel : (rawModel?.primary || "");
+    if (!modelStr) return;
+    handleSetFusionTuning({ roles: { ...panelRoles, [modelStr]: role } });
   };
 
   return (
@@ -409,14 +416,16 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                   <div className="mt-2 flex flex-col gap-1">
                     <span className="text-[11px] font-medium text-text-muted">{translate("combos.panelRoles")}</span>
                     <div className="flex flex-col gap-0.5">
-                      {models.map((model, index) => (
+                      {models.map((model, index) => {
+                        const modelStr = typeof model === "string" ? model : (model?.primary || "");
+                        return (
                         <div key={index} className="flex min-w-0 items-center gap-1.5">
                           <code className="inline-flex min-w-0 flex-1 items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-[11px] text-text-muted dark:bg-white/5">
                             <span className="text-[9px] text-text-muted/60 shrink-0">{index + 1}</span>
-                            <span className="truncate">{typeof model === "string" ? model : (model?.primary || "")}</span>
+                            <span className="truncate">{modelStr}</span>
                           </code>
                           <select
-                            value={panelRoles[index] || ""}
+                            value={panelRoles[modelStr] || ""}
                             onChange={(e) => handleSetPanelRole(index, e.target.value)}
                             className="text-[11px] py-0.5 px-1.5 rounded border border-black/10 dark:border-white/10 bg-surface-2 text-text-main focus:outline-none focus:ring-1 focus:ring-primary/30 shrink-0 max-w-[55%]"
                             title={translate("combos.panelRoleHint")}
@@ -427,7 +436,8 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                             ))}
                           </select>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -701,7 +711,7 @@ function PanelSlot({ index, slot, isFirst, isLast, onPickPrimary, onPickBackup, 
   );
 }
 
-function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null }) {
+function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindFilter = null, strategy = {}, onSetStrategy = null }) {
   // F1: Detect existing failover format on init. The key prop on the parent
   // (key={editingCombo?.id || "new"}) forces a remount on edit, so this runs once
   // per modal open and we can safely initialize state from `combo` here.
@@ -821,16 +831,47 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
   };
 
   const handleRemovePanelSlot = (index) => {
+    // A2.5: Clean up the role key for the removed slot's primary model so the
+    // {modelStr: role} map stays in sync with the panel composition.
+    const removed = panelSlots[index];
+    const removedPrimary = typeof removed?.primary === "string" ? removed.primary : "";
+    if (removedPrimary && typeof onSetStrategy === "function") {
+      const ft = strategy?.fusionTuning || {};
+      const roles = ft.roles && typeof ft.roles === "object" && !Array.isArray(ft.roles) ? ft.roles : {};
+      if (roles[removedPrimary]) {
+        const nextRoles = { ...roles };
+        delete nextRoles[removedPrimary];
+        onSetStrategy({ fusionTuning: { ...ft, roles: nextRoles } });
+      }
+    }
     setPanelSlots(panelSlots.filter((_, i) => i !== index));
   };
 
   /**
    * F1: Set the primary or backup model on a specific panel slot.
+   * A2.4: When `field === "primary"` changes, migrate any role key from the
+   * old primary to the new primary so the {modelStr: role} mapping tracks the
+   * model rather than the slot index.
    * @param {number} index - slot index in panelSlots
    * @param {"primary"|"backup"} field - which field to update
    * @param {string} value - model value (or "" / null to clear)
    */
   const handleSetPanelField = (index, field, value) => {
+    if (field === "primary" && typeof onSetStrategy === "function") {
+      const oldPrimary = typeof panelSlots[index]?.primary === "string" ? panelSlots[index].primary : "";
+      const newPrimary = typeof value === "string" ? value : "";
+      if (oldPrimary && newPrimary && oldPrimary !== newPrimary) {
+        const ft = strategy?.fusionTuning || {};
+        const roles = ft.roles && typeof ft.roles === "object" && !Array.isArray(ft.roles) ? ft.roles : {};
+        const existingRole = roles[oldPrimary];
+        if (existingRole) {
+          const nextRoles = { ...roles };
+          delete nextRoles[oldPrimary];
+          nextRoles[newPrimary] = existingRole;
+          onSetStrategy({ fusionTuning: { ...ft, roles: nextRoles } });
+        }
+      }
+    }
     setPanelSlots((prev) => prev.map((s, i) => i === index
       ? { ...s, [field]: field === "backup" ? (value || null) : value }
       : s));
@@ -925,10 +966,32 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
 
   const isEdit = !!combo;
 
-  // Models already added (for ModelSelectModal's "added" highlighting)
-  const addedModelValues = failoverEnabled
-    ? panelSlots.flatMap((s) => (s ? [s.primary, s.backup].filter(Boolean) : []))
-    : models;
+  // B2.2: addedModelValues + allowReuse depend on mode and pickTarget.field:
+  //   - Non-failover: addedModelValues = models (string[]), allowReuse=false (maintain original behavior)
+  //   - Failover + pick primary: addedModelValues = all slot primaries (dedup primary across
+  //     slots), allowReuse=false (primary cannot duplicate)
+  //   - Failover + pick backup: addedModelValues = [] (clear dedup list so backup can reuse
+  //     ANY model including primaries of other slots), allowReuse=true
+  //
+  // B2.3 manual verification scenarios (encoded as comments per task requirement):
+  //   1. failover + slot-1.primary="minimax/m3" + pick slot-2 backup
+  //      -> "minimax/m3" NOT in [] -> isAdded=false -> onSelect (user example: reuse allowed)
+  //   2. failover + slot-1.primary="openai/gpt-4" + pick slot-2 backup
+  //      -> "openai/gpt-4" NOT in [] -> isAdded=false -> onSelect (same-class scenario)
+  //   3. failover + slot-1.primary="minimax/m3" + pick slot-2 primary
+  //      -> "minimax/m3" IN primaries -> isAdded=true && !allowReuse -> onDeselect (dedup maintained)
+  //
+  // Note: When the modal is closed (showModelSelect=false), pickTarget is null and these
+  // values are not consumed by the modal. In non-failover mode the "Add Model" button opens
+  // the modal with pickTarget=null, so addedModelValues=models and allowReuse=false (original
+  // behavior). In failover mode the modal is only opened via handlePickPanelField which
+  // always sets pickTarget before showing the modal.
+  const allowReuse = failoverEnabled && pickTarget?.field === "backup";
+  const addedModelValues = !failoverEnabled
+    ? models
+    : (pickTarget?.field === "backup"
+        ? []
+        : panelSlots.flatMap((s) => (s && typeof s.primary === "string" ? [s.primary] : [])));
 
   // F1: Failover mode renders one PanelSlot per {primary, backup} entry.
   const slotsList = failoverEnabled ? panelSlots : [];
@@ -1077,7 +1140,10 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         </div>
       </Modal>
 
-      {/* Model Select Modal — single-pick in failover mode, multi-add in string[] mode */}
+      {/* Model Select Modal — single-pick in failover mode, multi-add in string[] mode.
+          B2.2: allowReuse=true only when picking backup in failover mode (backup can reuse
+          any model including primaries of other slots). Primary selection and non-failover
+          mode use allowReuse=false (default dedup behavior). */}
       <ModelSelectModal
         isOpen={showModelSelect}
         onClose={() => { setShowModelSelect(false); setPickTarget(null); }}
@@ -1088,6 +1154,7 @@ function ComboFormModal({ isOpen, combo, onClose, onSave, activeProviders, kindF
         title={pickTarget ? translate("combos.pickModel", { field: pickTarget.field, slot: pickTarget.slotIndex + 1 }) : translate("Add Model to Combo")}
         kindFilter={kindFilter}
         addedModelValues={addedModelValues}
+        allowReuse={allowReuse}
         closeOnSelect={failoverEnabled && !!pickTarget}
       />
     </>

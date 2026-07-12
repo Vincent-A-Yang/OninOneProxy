@@ -452,6 +452,10 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
         </div>
       )}
 
+      {/* B4 Audit (main model): OpenCodeToolCard uses `selectedModels` as a flat list (onSelect
+          has explicit `!selectedModels.includes(model.value)` guard). Multi-model LIST, not
+          SLOTS. allowReuse=true would break toggle-to-deselect UX. Conclusion: NO reuse need,
+          no modification. */}
       <ModelSelectModal
         isOpen={modalOpen}
         onClose={() => {
@@ -479,6 +483,8 @@ export default function OpenCodeToolCard({ tool, isExpanded, onToggle, baseUrl, 
         title="Add Model for OpenCode"
       />
 
+      {/* B4 Audit (subagent model): Single-select modal (selectedModel, no addedModelValues).
+          Single model, no duplicates possible. Conclusion: NO reuse need, no modification. */}
       <ModelSelectModal
         isOpen={subagentModalOpen}
         onClose={() => setSubagentModalOpen(false)}
