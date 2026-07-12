@@ -354,12 +354,15 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
               {models.length === 0 ? (
                 <span className="text-xs text-text-muted italic">{translate("combos.noModels")}</span>
               ) : (
-                models.slice(0, 3).map((model, index) => (
-                  <code key={index} className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5">
-                    <span>{model}</span>
-                    <CapacityBadges caps={modelCaps[model]} />
-                  </code>
-                ))
+                models.slice(0, 3).map((rawModel, index) => {
+                  const model = typeof rawModel === "string" ? rawModel : (rawModel?.primary || "");
+                  return (
+                    <code key={index} className="inline-flex items-center gap-1 rounded bg-black/5 px-1.5 py-0.5 font-mono text-xs text-text-muted dark:bg-white/5">
+                      <span>{model}</span>
+                      <CapacityBadges caps={modelCaps[model]} />
+                    </code>
+                  );
+                })
               )}
               {models.length > 3 && (
                 <span className="text-[10px] text-text-muted">+{models.length - 3} more</span>
@@ -376,7 +379,7 @@ function ComboCard({ combo, modelCaps = {}, activeProviders = [], copied, onCopy
                     title="Pick the model that fuses panel answers"
                   >
                     <span className="material-symbols-outlined text-[13px]">gavel</span>
-                    <span className="truncate">{judge || translate("combos.autoMode", { model: models[0] || translate("combos.firstModel") })}</span>
+                    <span className="truncate">{judge || translate("combos.autoMode", { model: (typeof models[0] === "string" ? models[0] : (models[0]?.primary || "")) || translate("combos.firstModel") })}</span>
                   </button>
                   {judge && (
                     <button
