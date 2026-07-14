@@ -293,3 +293,131 @@ export function getCapabilitiesForModel(provider, model) {
   // 4. Floor
   return { ...DEFAULT_CAPABILITIES };
 }
+
+// ── Task 15: max_output_tokens dynamic query (3-level fallback) ─────
+// Independent of getCapabilitiesForModel so callers can query just the
+// output limit without resolving the full capability object. Keeps a
+// separate config map (MODEL_TOKEN_LIMITS) that can be updated at runtime
+// via setModelTokenLimits() or seeded from process.env.MODEL_TOKEN_LIMITS_JSON.
+// Fail-open: any error returns DEFAULT_MAX_OUTPUT_TOKENS so the request
+// never breaks because of a bad config entry.
+
+export const DEFAULT_MAX_OUTPUT_TOKENS = 64000;
+
+/**
+ * Token limit overrides keyed by provider -> model/pattern -> number.
+ * The "*" key holds model-level overrides that apply across all providers.
+ */
+export let MODEL_TOKEN_LIMITS = {};
+
+try {
+  const _raw = process.env.MODEL_TOKEN_LIMITS_JSON;
+  if (_raw) MODEL_TOKEN_LIMITS = JSON.parse(_raw);
+} catch { /* fail-open: keep empty object */ }
+
+// Per-level hit/miss counters for getMaxOutputTokensStats().
+const _maxOutputTokensStats = {
+  provider_exact: 0,
+  model_exact: 0,
+  pattern: 0,
+  default: 0,
+  errors: 0,
+};
+
+/**
+ * Simple glob matcher: '*' = any chars (incl empty), '?' = single char.
+ * Case-insensitive, anchored. No external deps.
+ * @param {string} pattern
+ * @param {string} str
+ * @returns {boolean}
+ */
+function matchGlob(pattern, str) {
+  if (typeof pattern !== "string" || typeof str !== "string") return false;
+  let regex = "^";
+  for (const ch of pattern) {
+    if (ch === "*") regex += ".*";
+    else if (ch === "?") regex += ".";
+    else regex += ch.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  regex += "$";
+  return new RegExp(regex, "i").test(str);
+}
+
+/**
+ * Resolve max_output_tokens via 3-level fallback + default.
+ *   1. MODEL_TOKEN_LIMITS[provider][model]   — provider-specific exact
+ *   2. MODEL_TOKEN_LIMITS["*"][model]        — model-level exact (cross-provider)
+ *   3. MODEL_TOKEN_LIMITS[provider][pattern] — glob match (e.g. "gpt-4*")
+ *   4. DEFAULT_MAX_OUTPUT_TOKENS             — safe floor
+ *
+ * Fail-open: any error returns DEFAULT_MAX_OUTPUT_TOKENS.
+ * @param {string} provider
+ * @param {string} model
+ * @returns {number}
+ */
+export function getMaxOutputTokens(provider, model) {
+  try {
+    if (!model) {
+      _maxOutputTokensStats.default++;
+      return DEFAULT_MAX_OUTPUT_TOKENS;
+    }
+
+    // 1. Provider-specific exact match
+    if (provider && MODEL_TOKEN_LIMITS[provider]) {
+      const v = MODEL_TOKEN_LIMITS[provider][model];
+      if (typeof v === "number" && v > 0) {
+        _maxOutputTokensStats.provider_exact++;
+        return v;
+      }
+    }
+
+    // 2. Model-level exact match (cross-provider, key "*")
+    const star = MODEL_TOKEN_LIMITS["*"];
+    if (star) {
+      const v = star[model];
+      if (typeof v === "number" && v > 0) {
+        _maxOutputTokensStats.model_exact++;
+        return v;
+      }
+    }
+
+    // 3. Pattern glob match (provider-scoped, skip exact-match key)
+    if (provider && MODEL_TOKEN_LIMITS[provider]) {
+      for (const [pattern, v] of Object.entries(MODEL_TOKEN_LIMITS[provider])) {
+        if (pattern === model) continue;
+        if (typeof v === "number" && v > 0 && matchGlob(pattern, model)) {
+          _maxOutputTokensStats.pattern++;
+          return v;
+        }
+      }
+    }
+
+    // 4. Default floor
+    _maxOutputTokensStats.default++;
+    return DEFAULT_MAX_OUTPUT_TOKENS;
+  } catch {
+    _maxOutputTokensStats.errors++;
+    return DEFAULT_MAX_OUTPUT_TOKENS;
+  }
+}
+
+/**
+ * Update MODEL_TOKEN_LIMITS at runtime (e.g. from dashboard config).
+ * Replaces the current mapping. Fail-open: bad input resets to empty.
+ * @param {object} json
+ */
+export function setModelTokenLimits(json) {
+  try {
+    MODEL_TOKEN_LIMITS = (json && typeof json === "object") ? json : {};
+  } catch {
+    MODEL_TOKEN_LIMITS = {};
+  }
+}
+
+/**
+ * Return hit/miss counters by resolution level (for dashboard / debugging).
+ * @returns {object}
+ */
+export function getMaxOutputTokensStats() {
+  return { ..._maxOutputTokensStats };
+}

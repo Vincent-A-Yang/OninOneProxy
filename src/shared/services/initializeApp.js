@@ -107,7 +107,7 @@ export async function initializeApp() {
       const { loadAllSources } = await import("@/lib/db/repos/quotaPoolRepo");
       const { hydrateFromRepo } = await import("open-sse/services/quotaPool.js");
       const sources = await loadAllSources();
-      const stats = hydrateFromRepo(sources);
+      const stats = await hydrateFromRepo(sources);
       console.log(`[InitApp] QuotaPool hydrated: ${stats.success}/${stats.total} sources`);
     } catch (e) {
       console.warn("[InitApp] QuotaPool hydrate failed:", e?.message || String(e));

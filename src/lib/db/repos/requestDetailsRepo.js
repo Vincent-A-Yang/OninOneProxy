@@ -180,6 +180,59 @@ export async function getRequestDetailById(id) {
   return row ? parseJson(row.data, null) : null;
 }
 
+// === Task 16: requestDetails 30-day retention cleanup ===
+//
+// Purges request monitoring rows older than the retention window so the
+// requestDetails table cannot grow without bound. Fail-open: any error is
+// logged via console.warn and a zero-deleted result is returned — the service
+// is never affected by cleanup failures.
+//
+// daysToKeep must be a finite positive number; otherwise it falls back to 30
+// (SQL injection guard — the value is only ever bound as a SQLite modifier
+// string, never interpolated into the SQL text).
+export async function cleanupOldRequests(daysToKeep = 30) {
+  const days = (typeof daysToKeep === "number" && Number.isFinite(daysToKeep) && daysToKeep > 0)
+    ? daysToKeep
+    : 30;
+  try {
+    const db = await getAdapter();
+    const result = db.run(
+      `DELETE FROM requestDetails WHERE timestamp < datetime('now', ?)`,
+      [`-${days} days`]
+    );
+    const deleted = result && typeof result.changes === "number" ? result.changes : 0;
+    return { deleted, daysToKeep: days };
+  } catch (e) {
+    console.warn("[requestDetailsRepo] cleanupOldRequests failed:", e?.message || String(e));
+    return { deleted: 0, daysToKeep: days };
+  }
+}
+
+// Returns retention diagnostics for the requestDetails table. Fail-open: on
+// error returns zeroed stats so dashboard callers degrade gracefully.
+export async function getRetentionStats() {
+  try {
+    const db = await getAdapter();
+    const cntRow = db.get(`SELECT COUNT(*) AS c FROM requestDetails`);
+    const totalRows = cntRow && typeof cntRow.c === "number" ? cntRow.c : 0;
+    const range = db.get(
+      `SELECT MIN(timestamp) AS oldest, MAX(timestamp) AS newest FROM requestDetails`
+    );
+    const oldestTimestamp = range?.oldest || null;
+    const newestTimestamp = range?.newest || null;
+    // Estimate the table's payload footprint from the data column length.
+    // LENGTH() counts characters (UTF-8 aware) — close enough for an estimate.
+    const sizeRow = db.get(
+      `SELECT COALESCE(SUM(LENGTH(data)), 0) AS s FROM requestDetails`
+    );
+    const estimatedSizeBytes = sizeRow && typeof sizeRow.s === "number" ? sizeRow.s : 0;
+    return { totalRows, oldestTimestamp, newestTimestamp, estimatedSizeBytes };
+  } catch (e) {
+    console.warn("[requestDetailsRepo] getRetentionStats failed:", e?.message || String(e));
+    return { totalRows: 0, oldestTimestamp: null, newestTimestamp: null, estimatedSizeBytes: 0 };
+  }
+}
+
 const _shutdownHandler = async () => {
   if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
   if (writeBuffer.length > 0) await flushToDatabase();

@@ -83,3 +83,98 @@ export const COOLDOWN_MS = {
   transient: TRANSIENT_COOLDOWN_MS,
   requestNotAllowed: COOLDOWN.short,
 };
+
+// ---------------------------------------------------------------------------
+// Fine-grained rate-limit classification (5 categories)
+// ---------------------------------------------------------------------------
+// Used by quotaPool.recordFailure to decide whether to increment the
+// per-source failureCount (which drives exponential backoff) and by
+// downstream callers to pick the right recovery strategy.
+//
+// Design goals:
+//   - 5xx server errors MUST NOT bump the 429 backoff ladder (they get a
+//     short cooldown + failover instead, so a flaky upstream can't poison
+//     the rate-limit staircase).
+//   - Daily-quota exhaustion uses dual-marker detection (see
+//     DAILY_QUOTA_MARKERS + DAILY_QUOTA_QUALIFIERS) to avoid false
+//     positives on generic "quota" messages that are really per-minute.
+//   - Failure counts expire after FAILURE_COUNT_EXPIRY_MS so a source
+//     recovers automatically once it's been quiet for an hour.
+// ---------------------------------------------------------------------------
+
+export const ERROR_CATEGORIES = {
+  PER_MINUTE_429: "per_minute_429",       // 每分钟速率限制 — 走指数退避阶梯
+  DAILY_QUOTA: "daily_quota",             // 每日配额耗尽 — 长冷却，等待重置
+  PAYMENT_REQUIRED: "payment_required",   // 402 计费问题 — 切 key
+  MODEL_FORBIDDEN: "model_forbidden",     // 403 模型禁用 — 切模型
+  SERVER_ERROR_5XX: "server_error_5xx",   // 5xx 服务端错误 — 短冷却 + 故障转移，不累加 failure_count
+  UNKNOWN: "unknown",
+};
+
+// failure_count 1 小时过期：超过此时间未发生新失败，计数自动归零
+export const FAILURE_COUNT_EXPIRY_MS = 3600 * 1000;
+
+// 退避时长硬上限：300 秒（与 BACKOFF_CONFIG.max 一致，显式声明便于引用）
+export const BACKOFF_MAX_MS = 300 * 1000;
+
+// 双标记防误判：daily 配额耗尽需要同时命中 marker + qualifier
+// 仅有 "daily" 不够（可能是 "daily reset"），仅有 "quota" 不够（可能是 per-minute quota）
+export const DAILY_QUOTA_MARKERS = ["daily"];
+export const DAILY_QUOTA_QUALIFIERS = ["allocation", "quota", "limit", "exhaust", "used up"];
+
+// 429 / 速率限制的文本标记（当 status 不是 429 但消息匹配时使用）
+const RATE_LIMIT_MARKERS = ["rate limit", "too many requests", "rate_limit", "rate_limit_exceeded"];
+
+// ---------------------------------------------------------------------------
+// UTC midnight utilities
+// ---------------------------------------------------------------------------
+// Daily-quota allowances on most providers (OpenAI, Anthropic, Gemini, Azure)
+// reset at UTC 00:00:00. These helpers compute the remaining wait time so a
+// daily-quota cooldown expires exactly when the quota refreshes — no shorter
+// (would hammer a still-exhausted key) and no longer (would waste usable
+// quota after reset).
+// ---------------------------------------------------------------------------
+
+/**
+ * Milliseconds until the next UTC 00:00:00.
+ *
+ * Algorithm: jump 24 h into the future, then read the UTC date components of
+ * that moment and construct the midnight that starts that day. This cleanly
+ * handles day / month / year boundaries without manual arithmetic.
+ *
+ * Pure function — never throws. On any internal error returns 0 (fail-open,
+ * i.e. no cooldown, so a broken clock never wedges a key permanently).
+ *
+ * @returns {number} milliseconds in [0, 86_400_000]; 0 on error.
+ */
+export function msUntilNextUtcMidnight() {
+  try {
+    const now = Date.now();
+    const future = new Date(now + 24 * 60 * 60 * 1000);
+    const nextMidnight = Date.UTC(
+      future.getUTCFullYear(),
+      future.getUTCMonth(),
+      future.getUTCDate(),
+      0, 0, 0, 0
+    );
+    const ms = nextMidnight - now;
+    if (!Number.isFinite(ms) || ms < 0) return 0;
+    if (ms > 24 * 60 * 60 * 1000) return 24 * 60 * 60 * 1000;
+    return ms;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Seconds until the next UTC 00:00:00 (ceiling).
+ *
+ * Convenience wrapper around `msUntilNextUtcMidnight()` that returns whole
+ * seconds, rounded up so the cooldown never expires a fraction of a second
+ * before the actual reset.
+ *
+ * @returns {number} seconds in [0, 86_400]; 0 on error.
+ */
+export function secondsUntilNextUtcMidnight() {
+  return Math.ceil(msUntilNextUtcMidnight() / 1000);
+}

@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 ARG NODE_IMAGE=node:22-alpine
 FROM ${NODE_IMAGE} AS base
 WORKDIR /app
@@ -12,8 +11,7 @@ RUN sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories
 COPY package.json ./
 # Use Chinese npm + node headers mirror to avoid slow proxy downloads.
 # npmmirror.com mirrors both npm packages and node headers (for node-gyp).
-RUN --mount=type=cache,target=/root/.npm \
-  npm config set registry https://registry.npmmirror.com && \
+RUN npm config set registry https://registry.npmmirror.com && \
   NODEJS_ORG_MIRROR=https://registry.npmmirror.com/-/binary/node \
   npm install
 
@@ -43,15 +41,30 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/custom-server.js ./custom-server.js
+# d3-preregister.cjs is dynamically imported by custom-server.js (line 248).
+# Next.js standalone tracing does not include it, so we COPY it explicitly.
+COPY --from=builder /app/d3-preregister.cjs ./d3-preregister.cjs
 COPY --from=builder /app/open-sse ./open-sse
 # Next file tracing can omit sibling files; MITM runs server.js as a separate process.
 COPY --from=builder /app/src/mitm ./src/mitm
+# src/lib contains dynamically-imported files (cleanupScheduler.js, repos/*, helpers/*,
+# dataDir.js) that Next.js standalone tracing does not include. custom-server.js
+# imports cleanupScheduler.js at boot, repos/* are loaded lazily by the SSE
+# handlers, and paths.js (via driver.js) imports dataDir.js — a sibling file
+# outside src/lib/db that must be present for the db module graph to load.
+COPY --from=builder /app/src/lib ./src/lib
 # Standalone node_modules may omit deps only required by the MITM child process.
 COPY --from=builder /app/node_modules/node-forge ./node_modules/node-forge
 # hnswlib-node is dynamically imported (import()) so Next.js tracing may miss it.
 COPY --from=builder /app/node_modules/hnswlib-node ./node_modules/hnswlib-node
 # Ensure `next` is available at runtime in case tracing did not include it.
 COPY --from=builder /app/node_modules/next ./node_modules/next
+# `uuid` is used by 6 repos (connectionsRepo, apiKeysRepo, combosRepo, cacheRepo,
+# nodesRepo, proxyPoolsRepo). Next.js tracing omits it because these repos are
+# only loaded via dynamic import() from custom-server.js, not from the static
+# build graph. Without this COPY, combosRepo.js fails to load with
+# "Cannot find package 'uuid'" and runSmartRouterTick silently no-ops.
+COPY --from=builder /app/node_modules/uuid ./node_modules/uuid
 
 RUN mkdir -p /app/data && chown -R node:node /app && \
   mkdir -p /app/data-home && chown node:node /app/data-home && \

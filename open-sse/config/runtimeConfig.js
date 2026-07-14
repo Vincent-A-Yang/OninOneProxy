@@ -77,6 +77,12 @@ function envMs(name, def) {
 // STREAM_STALL_TIMEOUT_MS.
 export const STREAM_STALL_TIMEOUT_MS = envMs("STREAM_STALL_TIMEOUT_MS", 120 * 1000);
 
+// Reasoning/thinking models can emit zero visible content for long stretches
+// while they produce internal reasoning. A dedicated, longer stall timeout
+// prevents falsely aborting a model that is genuinely thinking. Default 5min,
+// env override: STREAM_REASONING_STALL_TIMEOUT_MS.
+export const STREAM_REASONING_STALL_TIMEOUT_MS = envMs("STREAM_REASONING_STALL_TIMEOUT_MS", 300 * 1000);
+
 // Time-to-first-token timeout (prompt prefill). Tuned down from 200s to 90s:
 // the original 200s was sized to absorb Clash CONNECT 30s + retry chains; with
 // the proxy bypass in place, 90s is enough for the slowest provider prefill
@@ -113,7 +119,8 @@ export const RETRY_CONFIG = {
 // Backward compat: if value is a number, treated as attempts with RETRY_CONFIG.delayMs
 export const DEFAULT_RETRY_CONFIG = {
   429: { attempts: 0, delayMs: 0 },
-  502: { attempts: 3, delayMs: 3000 },
+  // 502 是上游临时故障，重试同一上游无意义，直接触发故障转移到下一个 provider/key
+  502: { attempts: 0, delayMs: 3000 },
   503: { attempts: 3, delayMs: 2000 },
   504: { attempts: 2, delayMs: 3000 }
 };

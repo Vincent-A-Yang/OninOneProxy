@@ -1,4 +1,5 @@
 "use client";
+// @deprecated 2026-07-13: component is exported via components/index.js but never rendered anywhere in 9router-src. Kept for source history; safe to remove in a future cleanup.
 
 import { useEffect, useMemo, useState } from "react";
 

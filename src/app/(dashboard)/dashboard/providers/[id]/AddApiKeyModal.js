@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import PropTypes from "prop-types";
 import { Button, Badge, Input, Modal, Select } from "@/shared/components";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { detectProviderFromKey } from "@/lib/key-prefix-detect";
 
 const BULK_PLACEHOLDER = `name1|sk-key1\nname2|sk-key2\nsk-key-only-auto-named`;
 
@@ -44,6 +45,28 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
   const [mode, setMode] = useState("single"); // "single" | "bulk"
   const [bulkText, setBulkText] = useState("");
   const [bulkResult, setBulkResult] = useState(null); // { success, failed }
+
+  // Auto-detect provider from API key prefix to warn the user when the
+  // pasted key doesn't belong to the current provider. This is a
+  // safety check — it does NOT override the provider (this modal is
+  // opened from a specific provider's detail page, so the provider is
+  // fixed). When the detected provider matches the current one, we show
+  // a subtle confirmation hint; when it differs, we show a yellow
+  // warning so the user can double-check before saving.
+  const detectedProvider = useMemo(() => {
+    if (isOllamaLocal || isCookie) return null;
+    if (!formData.apiKey) return null;
+    return detectProviderFromKey(formData.apiKey);
+  }, [formData.apiKey, isOllamaLocal, isCookie]);
+
+  const detectedProviderName = detectedProvider
+    ? AI_PROVIDERS[detectedProvider]?.name || detectedProvider
+    : null;
+
+  const showKeyMismatchWarning =
+    !!detectedProvider && detectedProvider !== provider;
+  const showKeyMatchHint =
+    !!detectedProvider && detectedProvider === provider;
 
   const buildProviderSpecificData = () => {
     if (isOllamaLocal && formData.ollamaHostUrl.trim()) {
@@ -227,6 +250,26 @@ export default function AddApiKeyModal({ isOpen, provider, providerName, isCompa
                 {validating ? "Checking..." : "Check"}
               </Button>
             </div>
+          </div>
+        )}
+        {/* Key prefix auto-detection feedback.
+            When the pasted key's prefix matches a known provider, we show
+            a hint. If that provider differs from the current one, we show
+            a yellow warning to prevent saving the key under the wrong
+            provider. */}
+        {showKeyMismatchWarning && (
+          <div className="flex items-start gap-2 rounded-lg border border-yellow-300/50 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-600 dark:text-yellow-400">
+            <span className="material-symbols-outlined text-[18px] mt-[-1px]">warning</span>
+            <span>
+              已从 Key 前缀识别为 <strong>{detectedProviderName}</strong>，但当前页面是
+              <strong> {providerName || provider}</strong>。请确认 Key 是否粘贴正确。
+            </span>
+          </div>
+        )}
+        {showKeyMatchHint && (
+          <div className="flex items-start gap-2 rounded-lg border border-emerald-300/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-600 dark:text-emerald-400">
+            <span className="material-symbols-outlined text-[16px] mt-[-1px]">check_circle</span>
+            <span>Key 前缀匹配当前 provider ({detectedProviderName})。</span>
           </div>
         )}
         {isXaiApiKey && (

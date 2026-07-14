@@ -9,6 +9,7 @@ import {
 import { APIKEY_PROVIDERS } from "@/shared/constants/config";
 import { AI_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, isCustomEmbeddingProvider } from "@/shared/constants/providers";
 import { normalizeProviderId, normalizeProviderSpecificData, detectProviderNameConflict } from "@/lib/providerNormalization";
+import { detectProviderFromKey } from "@/lib/key-prefix-detect";
 
 export const dynamic = "force-dynamic";
 
@@ -108,8 +109,19 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const provider = normalizeProviderId(body.provider);
+    let provider = normalizeProviderId(body.provider);
     const { apiKey, name, displayName, priority, globalPriority, defaultModel, testStatus } = body;
+
+    // Auto-detect provider from API key prefix when the caller didn't
+    // specify one (e.g. the "Add New Provider" form when the user pastes
+    // a key before picking a provider). An explicitly-set provider is
+    // always honoured — this only fires as a fallback.
+    if (!provider && apiKey) {
+      const detected = detectProviderFromKey(apiKey);
+      if (detected) {
+        provider = normalizeProviderId(detected);
+      }
+    }
     const proxyConfig = normalizeProxyConfig(body);
     if (proxyConfig.error) {
       return NextResponse.json({ error: proxyConfig.error }, { status: 400 });

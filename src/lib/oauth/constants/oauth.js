@@ -114,6 +114,19 @@ export const CODEBUDDY_CONFIG = { ...PROVIDER_OAUTH["codebuddy-cn"] };
 // Kimchi OAuth Configuration (Browser token callback flow)
 export const KIMCHI_CONFIG = { ...PROVIDER_OAUTH["kimchi"] };
 
+// Trae CN OAuth Configuration (Import Token from Trae CN desktop client)
+// Cloud-IDE-JWT (RS256, ~14-day lifetime). ByteDance has not published a public
+// OAuth client_id, so we use import-token flow — same approach as OmniRoute intl.
+// tokenLifetimeDays: used as fallback when JWT has no exp claim
+export const TRAECN_CONFIG = {
+  ...PROVIDER_OAUTH["traecn"],
+  tokenStoragePaths: {
+    linux: "~/.config/Trae CN/User/globalStorage/state.vscdb",
+    macos: "/Users/<user>/Library/Application Support/Trae CN/User/globalStorage/state.vscdb",
+    windows: "%APPDATA%\\Trae CN\\User\\globalStorage\\state.vscdb",
+  },
+};
+
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
 
@@ -136,4 +149,5 @@ export const PROVIDERS = {
   GITLAB: "gitlab",
   CODEBUDDY: "codebuddy-cn",
   KIMCHI: "kimchi",
+  TRAECN: "traecn",
 };

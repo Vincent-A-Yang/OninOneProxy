@@ -10,6 +10,7 @@ import { APP_CONFIG } from "@/shared/constants/config";
 import { LOCALE_COOKIE, normalizeLocale } from "@/i18n/config";
 import { LOCALE_FLAGS } from "@/shared/constants/locales";
 import { translate } from "@/i18n/runtime";
+import ModelSyncCard from "./ModelSyncCard";
 
 function getLocaleFromCookie() {
   if (typeof document === "undefined") return "en";
@@ -1318,6 +1319,12 @@ export default function ProfilePage() {
             )}
           </div>
         </Card>
+
+        {/* Task 10: Model Sync */}
+        <ModelSyncCard
+          settings={settings}
+          onSettingsPatch={(updates) => setSettings((prev) => ({ ...prev, ...updates }))}
+        />
 
         {/* Account actions */}
         <div className="flex flex-col sm:flex-row gap-2">

@@ -34,6 +34,19 @@
  */
 
 // ---------------------------------------------------------------------------
+// Imports — failure-count expiry + backoff cap (fine-grained rate-limit policy)
+// ---------------------------------------------------------------------------
+import { FAILURE_COUNT_EXPIRY_MS, BACKOFF_MAX_MS } from "../config/errorConfig.js";
+// Task 12: StickySession — three scheduling modes for source selection
+import {
+  STICKY_MODES,
+  getStickyMode,
+  setStickyMode,
+  selectWithSticky,
+  getStickyStats,
+} from "./stickySession.js";
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 const WINDOW_SECONDS = 60;          // 1-minute sliding window
@@ -64,6 +77,8 @@ const DEFAULT_TPM_LIMIT = 100000;    // generous default; effectively uncapped
  * @property {number} totalCost          - Lifetime cost
  * @property {number} totalSuccess       - Successful request count
  * @property {number} totalFailure       - Failed request count
+ * @property {number} failureCount       - Consecutive 429-style failures (drives backoff level); 5xx does NOT bump this
+ * @property {number} lastFailureAtMs    - Timestamp of last failure (0 = never); used for 1h expiry
  */
 
 /** @type {Map<string, SourceState>} keyed by sourceId */
@@ -196,11 +211,16 @@ export function maskKey(key) {
   return `${str.slice(0, 4)}…${str.slice(-4)}`;
 }
 
-function makeSourceId(provider, apiKey, model) {
+function makeSourceId(provider, apiKey, model, connectionId = "") {
   const p = (provider || "").toLowerCase();
   const k = maskKey(apiKey);
   const m = model || "?";
-  return `${p}|${k}|${m}`;
+  // connectionId disambiguates multiple virtual instances that share the
+  // same provider+apiKey+model (notably noAuth providers where apiKey="").
+  // Without it, all noAuth instances collapse into one source and only the
+  // first one ever receives traffic.
+  const c = connectionId ? String(connectionId).slice(0, 8) : "";
+  return c ? `${p}|${k}|${m}|${c}` : `${p}|${k}|${m}`;
 }
 
 /**
@@ -266,6 +286,7 @@ const F6_WINDOW_SECONDS = {
   minute: 60,
   hour: 3600,
   day: 86400,
+  five_hour: 18000, // 5 * 60 * 60 — 商汤 SenseNova 特有
 };
 
 /**
@@ -445,7 +466,8 @@ export function registerSource(logicalId, source) {
     const provider = (source.provider || "").toLowerCase();
     const apiKey = source.apiKey || "";
     const model = source.model || "";
-    const sourceId = makeSourceId(provider, apiKey, model);
+    const connectionId = source.connectionId || "";
+    const sourceId = makeSourceId(provider, apiKey, model, connectionId);
     if (!sourceId) return "";
 
     const existing = sourcesById.get(sourceId);
@@ -548,6 +570,8 @@ export function registerSource(logicalId, source) {
       totalCost: 0,
       totalSuccess: 0,
       totalFailure: 0,
+      failureCount: 0,
+      lastFailureAtMs: 0,
       f6Windows,
       f6Quota,
     };
@@ -730,6 +754,45 @@ export function getAllSourcesForLogical(logicalId) {
 }
 
 /**
+ * Compute the dual-window weight penalty for a source.
+ *
+ * Inspects the source's f6Quota windows for `weekly` and `5h` periods. When
+ * either window's remaining ratio drops below 10%, a 0.5x multiplier is
+ * applied per depleted window (so a source low on both windows gets 0.25x).
+ *
+ * This is a soft penalty layered on top of the hard exhaustion check: a
+ * source with < 10% weekly remaining is still selectable (not skipped), but
+ * the load balancer prefers healthier sources first. Sources whose windows
+ * are fully exhausted are already filtered out by the `ratio <= 0` branch
+ * in selectSource before this function is reached.
+ *
+ * Fail-open: any error returns 1 (no penalty).
+ *
+ * @param {SourceState} state
+ * @returns {number} Penalty multiplier in (0, 1].
+ */
+function computeDualWindowPenalty(state) {
+  try {
+    if (!state || !Array.isArray(state.f6Quota) || state.f6Quota.length === 0) {
+      return 1;
+    }
+    const LOW_RATIO_THRESHOLD = 0.1;
+    let penalty = 1;
+    for (const q of state.f6Quota) {
+      if (!q || q.limit <= 0) continue;
+      if (q.period !== "weekly" && q.period !== "5h") continue;
+      const ratio = Math.max(0, (q.limit - q.used) / q.limit);
+      if (ratio < LOW_RATIO_THRESHOLD) {
+        penalty *= 0.5;
+      }
+    }
+    return penalty;
+  } catch {
+    return 1;
+  }
+}
+
+/**
  * Weighted random/least-loaded source selection.
  *
  * Weight = remaining RPM headroom (rpmLimit − currentWindowRPM). Cooling
@@ -771,10 +834,9 @@ export function selectSource(logicalId) {
         if (anyExceeded) {
           continue;
         }
-        // Quota windows (lifetime/day/month token budgets) — also factor into
-        // the weight so the load balancer prefers sources with more quota
-        // remaining and skips sources whose quota is exhausted. Previously the
-        // comment promised this behavior but the code omitted it.
+        // Quota windows (lifetime/day/month/weekly/5h token budgets) — also
+        // factor into the weight so the load balancer prefers sources with
+        // more quota remaining and skips sources whose quota is exhausted.
         if (Array.isArray(state.f6Quota) && state.f6Quota.length > 0) {
           for (const q of state.f6Quota) {
             if (!q || q.limit <= 0) continue;
@@ -790,6 +852,11 @@ export function selectSource(logicalId) {
           }
         }
         w = minRatio > 0 ? minRatio : 0.001;
+        // Dual-window penalty: when the weekly or 5h window remaining drops
+        // below 10%, apply an extra 0.5x weight penalty so the load balancer
+        // steers away from this source even before the hard exhaustion cutoff.
+        // This keeps traffic on healthier sources during the tail of a window.
+        w *= computeDualWindowPenalty(state);
       } else {
         // Original F5 behavior: weight = remaining RPM headroom.
         // Also factor in quota when available (F6 quota without F6 rate windows).
@@ -811,6 +878,10 @@ export function selectSource(logicalId) {
           remaining = remaining * minQuotaRatio;
         }
         w = remaining > 0 ? remaining : 0.001;
+        // Dual-window penalty applies to the F5 path too so sources with a
+        // depleted weekly/5h window are de-prioritized regardless of which
+        // rate-window branch they took.
+        w *= computeDualWindowPenalty(state);
       }
       weighted.push({ state, w });
       totalWeight += w;
@@ -831,6 +902,50 @@ export function selectSource(logicalId) {
     return null;
   }
 }
+
+/**
+ * Task 12: StickySession-aware source selection.
+ *
+ * Wraps the weighted selection with sticky-session logic. The effective mode
+ * is resolved from settings (or runtime override via setStickyMode). In
+ * CACHE_FIRST mode this function may await up to 60s while polling the
+ * sticky source's cooldown state — callers MUST await it.
+ *
+ * Fail-open: any exception falls back to the synchronous selectSource.
+ *
+ * @param {string} logicalId
+ * @param {object} [settings] - Settings snapshot with stickySessionMode.
+ * @returns {Promise<{sourceId,provider,apiKey,model}|null>}
+ */
+export async function selectSourceWithSticky(logicalId, settings) {
+  try {
+    if (!logicalId) return null;
+    const mode = getStickyMode(settings);
+    // CACHE_FIRST needs cooling sources included so selectWithSticky can
+    // detect the sticky source is cooling and wait for recovery. Other
+    // modes only see available (non-cooling) sources.
+    const includeCooling = mode === STICKY_MODES.CACHE_FIRST;
+    const raw = includeCooling
+      ? getAllSourcesForLogical(logicalId)
+      : getAvailableSources(logicalId);
+    if (!raw || raw.length === 0) return null;
+    const sources = raw.map((s) => ({
+      sourceId: s.sourceId,
+      provider: s.provider,
+      apiKey: s.apiKey,
+      model: s.model,
+    }));
+    return await selectWithSticky(sources, mode, {
+      logicalId,
+      isStillCooling: (sid) => isCooling(sid),
+    });
+  } catch {
+    return selectSource(logicalId);
+  }
+}
+
+// Task 12: Re-export StickySession API for centralized access from quotaPool.
+export { STICKY_MODES, getStickyMode, setStickyMode, getStickyStats };
 
 /**
  * Return aggregate retry-after seconds across a logical model's cooling sources.
@@ -913,6 +1028,143 @@ export function recordUsage(sourceId, usage = {}) {
 }
 
 // ---------------------------------------------------------------------------
+// Fine-grained failure-count management (5xx isolation + 1h expiry)
+// ---------------------------------------------------------------------------
+// failureCount drives the exponential-backoff ladder for 429-style rate
+// limits. 5xx server errors are deliberately EXCLUDED from this counter so
+// a flaky upstream (502/503/504) cannot poison the rate-limit staircase —
+// they still trigger a short cooldown + failover via coolDown(), but the
+// backoff level stays put. The counter auto-expires after
+// FAILURE_COUNT_EXPIRY_MS (1h) of inactivity so a source recovers without
+// manual intervention.
+//
+// All functions are fail-open: unknown source / invalid input → no-op.
+// ---------------------------------------------------------------------------
+
+/**
+ * Record a failure for a source, conditionally bumping failureCount.
+ *
+ * Behavior:
+ *   - is5xx === true:  do NOT bump failureCount (5xx is transient — short
+ *                      cooldown + failover only). lastFailureAtMs is still
+ *                      refreshed so the expiry window resets.
+ *   - is5xx === false: bump failureCount by 1 and refresh lastFailureAtMs.
+ *   - Before bumping, check expiry: if lastFailureAtMs is older than
+ *     FAILURE_COUNT_EXPIRY_MS, reset failureCount to 0 first (the previous
+ *     failure streak has aged out).
+ *
+ * @param {string} sourceId
+ * @param {{ is5xx?: boolean }} [opts] - is5xx: true when the failure was a 5xx server error.
+ * @returns {number} the resulting failureCount (post-update, post-expiry-check).
+ */
+export function recordFailure(sourceId, opts = {}) {
+  try {
+    const state = sourcesById.get(sourceId);
+    if (!state) return 0;
+    const now = nowMs();
+    const is5xx = opts && opts.is5xx === true;
+
+    // Expire stale failure streak: if the last failure was > 1h ago, the
+    // source has been quiet long enough to forgive the previous streak.
+    if (state.failureCount > 0 && state.lastFailureAtMs > 0) {
+      if (now - state.lastFailureAtMs > FAILURE_COUNT_EXPIRY_MS) {
+        state.failureCount = 0;
+      }
+    }
+
+    // Always refresh the last-failure timestamp (even for 5xx) so the
+    // expiry window restarts on every failure.
+    state.lastFailureAtMs = now;
+
+    // 5xx does NOT bump the 429 backoff ladder.
+    if (!is5xx) {
+      state.failureCount += 1;
+    }
+
+    return state.failureCount;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Get the current failureCount for a source, applying the 1h expiry check.
+ *
+ * If the last failure is older than FAILURE_COUNT_EXPIRY_MS, the count is
+ * treated as 0 (and the in-memory state is reset so subsequent reads are
+ * cheap). Returns 0 for unknown sources.
+ *
+ * @param {string} sourceId
+ * @returns {number}
+ */
+export function getFailureCount(sourceId) {
+  try {
+    const state = sourcesById.get(sourceId);
+    if (!state) return 0;
+    // Lazy expiry: reset on read if stale.
+    if (state.failureCount > 0 && state.lastFailureAtMs > 0) {
+      if (nowMs() - state.lastFailureAtMs > FAILURE_COUNT_EXPIRY_MS) {
+        state.failureCount = 0;
+      }
+    }
+    return state.failureCount || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Reset failureCount to 0 for a source.
+ *
+ * Called after a successful request so the backoff ladder restarts from
+ * level 0 on the next rate-limit. Clears lastFailureAtMs too.
+ *
+ * @param {string} sourceId
+ */
+export function resetFailureCount(sourceId) {
+  try {
+    const state = sourcesById.get(sourceId);
+    if (!state) return;
+    state.failureCount = 0;
+    state.lastFailureAtMs = 0;
+  } catch { /* fail-open */ }
+}
+
+/**
+ * Compute the exponential-backoff cooldown (ms) for a given failureCount,
+ * capped at BACKOFF_MAX_MS (300s).
+ *
+ * Formula: base * 2^(failureCount-1), clamped to [0, BACKOFF_MAX_MS].
+ *   failureCount 0 → 0ms (no cooldown)
+ *   failureCount 1 → base (2s)
+ *   failureCount 2 → 2*base (4s)
+ *   failureCount 3 → 4*base (8s) ... until 300s cap.
+ *
+ * Uses BACKOFF_CONFIG.base from errorConfig (re-exported here via
+ * BACKOFF_MAX_MS for the cap). The base is imported lazily to avoid a
+ * circular dep at module-eval time.
+ *
+ * @param {number} failureCount - typically the return of getFailureCount().
+ * @returns {number} cooldown in milliseconds (0 when failureCount <= 0).
+ */
+export function computeBackoffMs(failureCount) {
+  try {
+    const fc = Math.max(0, Math.floor(Number(failureCount) || 0));
+    if (fc <= 0) return 0;
+    // level = fc - 1 so failureCount=1 → 2^0 = 1x base.
+    const level = fc - 1;
+    // base = 2000ms (mirrors BACKOFF_CONFIG.base in errorConfig.js).
+    // Inlined to avoid importing the whole BACKOFF_CONFIG object (keeps
+    // the import surface minimal — we only need the cap from above).
+    const base = 2000;
+    const raw = base * Math.pow(2, level);
+    return Math.min(raw, BACKOFF_MAX_MS);
+  } catch {
+    return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Introspection (dashboard + tests)
 // ---------------------------------------------------------------------------
 
@@ -960,6 +1212,8 @@ export function getLogicalModels() {
           totalCost: s.totalCost,
           totalSuccess: s.totalSuccess,
           totalFailure: s.totalFailure,
+          failureCount: s.failureCount || 0,
+          lastFailureAtMs: s.lastFailureAtMs || 0,
           cooling,
           cooldownUntilMs: s.cooldownUntilMs,
           cooldownReason: s.cooldownReason,
@@ -1061,18 +1315,179 @@ export function clearAll() {
 // registerSource with the plaintext key, the idempotent update path kicks
 // in and replaces the masked-key entry in place (existing branch).
 
+// F6 fallback: local getEffectiveLimits for container runtime where
+// providerLimits.js can't be imported (webpack alias @/lib doesn't resolve
+// in custom-server.js / open-sse source context). Reads providerLimits table
+// directly via better-sqlite3, same 4-level priority chain as providerLimits.js.
+let _fallbackGetEffectiveLimits = null;
+
+const F6_FALLBACK_DEFAULT_LIMITS = {
+  nvidia:     { rateWindows: [{ window: 'minute', count: 40,  unit: 'request' }] },
+  openai:     { rateWindows: [{ window: 'minute', count: 500, unit: 'request' }] },
+  anthropic:  { rateWindows: [{ window: 'minute', count: 50,  unit: 'request' }] },
+  gemini:     { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  azure:      { rateWindows: [{ window: 'minute', count: 480, unit: 'request' }] },
+  deepseek:   { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  moonshot:   { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  alibaba:    { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  baidu:      { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  bytedance:  { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  zhipu:      { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  minimax:    { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  tencent:    { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  sensenova:  { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  linyi:      { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+};
+
+function f6FallbackBuildResult(cfg) {
+  const rateWindows = Array.isArray(cfg.rateWindows) ? cfg.rateWindows : [];
+  let quotaWindows = [];
+  if (Array.isArray(cfg.quotaWindows)) {
+    quotaWindows = cfg.quotaWindows;
+  } else if (cfg.quota && typeof cfg.quota === "object") {
+    quotaWindows = [cfg.quota];
+  }
+  return {
+    rateWindows,
+    quotaWindows,
+    quota: quotaWindows.length > 0 ? quotaWindows[0] : null,
+  };
+}
+
+function f6FallbackRowToConfig(row) {
+  if (!row) return null;
+  try {
+    let rateWindows = [];
+    try { rateWindows = JSON.parse(row.rateWindows || "[]"); } catch {}
+    let rawQuota = [];
+    try { rawQuota = JSON.parse(row.quota || "[]"); } catch {}
+    let quotaWindows;
+    if (Array.isArray(rawQuota)) {
+      quotaWindows = rawQuota;
+    } else if (rawQuota && typeof rawQuota === "object") {
+      quotaWindows = [rawQuota];
+    } else {
+      quotaWindows = [];
+    }
+    return {
+      id: row.id,
+      scope: row.scope,
+      provider: row.provider,
+      apiKeyMask: row.apiKeyMask ?? null,
+      model: row.model ?? null,
+      rateWindows,
+      quotaWindows,
+      quota: quotaWindows.length > 0 ? quotaWindows[0] : null,
+      enabled: row.enabled === 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function getFallbackGetEffectiveLimits() {
+  if (_fallbackGetEffectiveLimits) return _fallbackGetEffectiveLimits;
+  try {
+    const Database = (await import("better-sqlite3")).default;
+    const DB_PATH = "/app/data/db/data.sqlite";
+    _fallbackGetEffectiveLimits = async (provider, apiKey, model) => {
+      let db = null;
+      try {
+        if (!provider) return { rateWindows: [], quotaWindows: [], quota: null };
+        const apiKeyMask = maskKey(apiKey || "");
+        db = new Database(DB_PATH, { readonly: true });
+
+        // 1. source-level
+        try {
+          const rows = db.prepare(
+            `SELECT * FROM providerLimits WHERE scope = 'source' AND provider = ? AND apiKeyMask = ? AND model = ? AND enabled = 1`
+          ).all(provider, apiKeyMask, model || "");
+          for (const row of rows) {
+            const cfg = f6FallbackRowToConfig(row);
+            if (cfg) return f6FallbackBuildResult(cfg);
+          }
+        } catch {}
+
+        // 2. model-level
+        if (model) {
+          try {
+            const rows = db.prepare(
+              `SELECT * FROM providerLimits WHERE scope = 'model' AND provider = ? AND model = ? AND enabled = 1`
+            ).all(provider, model);
+            for (const row of rows) {
+              const cfg = f6FallbackRowToConfig(row);
+              if (cfg && (!cfg.scope || cfg.scope === "model")) {
+                return f6FallbackBuildResult(cfg);
+              }
+            }
+          } catch {}
+        }
+
+        // 3. provider-level
+        try {
+          const rows = db.prepare(
+            `SELECT * FROM providerLimits WHERE provider = ? AND enabled = 1`
+          ).all(provider);
+          for (const row of rows) {
+            const cfg = f6FallbackRowToConfig(row);
+            if (cfg && (!cfg.scope || cfg.scope === "provider")) {
+              return f6FallbackBuildResult(cfg);
+            }
+          }
+        } catch {}
+
+        // 4. built-in default
+        const def = F6_FALLBACK_DEFAULT_LIMITS[provider];
+        if (def) return f6FallbackBuildResult(def);
+
+        return { rateWindows: [], quotaWindows: [], quota: null };
+      } catch (e) {
+        console.warn(`[quotaPool] fallback getEffectiveLimits failed: ${e?.message || String(e)}`);
+        return { rateWindows: [], quotaWindows: [], quota: null };
+      } finally {
+        try { if (db) db.close(); } catch {}
+      }
+    };
+    console.log("[quotaPool] F6 fallback getEffectiveLimits active (direct DB read)");
+    return _fallbackGetEffectiveLimits;
+  } catch (e) {
+    console.warn(`[quotaPool] F6 fallback init failed: ${e?.message || String(e)}`);
+    return null;
+  }
+}
+
 /**
  * Hydrate the in-memory pool from persisted source metadata.
  *
  * @param {Array<{sourceId: string, logicalId: string, provider: string, apiKey: string, model: string, rpmLimit?: number|null, tpmLimit?: number|null}>} sources
- * @returns {{total: number, success: number, failed: number}}
+ * @returns {Promise<{total: number, success: number, failed: number}>}
  */
-export function hydrateFromRepo(sources) {
+export async function hydrateFromRepo(sources) {
   const total = Array.isArray(sources) ? sources.length : 0;
   let success = 0;
   let failed = 0;
   if (!Array.isArray(sources)) {
     return { total: 0, success: 0, failed: 0 };
+  }
+  // F6 verification stats: how many sources got non-null providerLimitsConfig.
+  let f6AttachedCount = 0;
+  let f6NullCount = 0;
+  let f6SampleAttached = null; // first non-null sample for log
+  let f6GetEffectiveFailures = 0;
+  // Dynamic import to avoid circular dependency: providerLimits.js already
+  // imports from quotaPool.js at module top-level (getSourceWindows, etc.).
+  // A static `import { getEffectiveLimits } from "./providerLimits.js"` here
+  // would create a circular ESM dependency. Using `await import()` defers
+  // resolution to runtime, after both modules are fully initialized.
+  let getEffectiveLimits = null;
+  try {
+    const mod = await import("./providerLimits.js");
+    getEffectiveLimits = mod.getEffectiveLimits;
+  } catch (e) {
+    console.warn(`[quotaPool] hydrateFromRepo: providerLimits module load failed, trying fallback: ${e?.message || String(e)}`);
+    // F6 fallback: use direct DB read when providerLimits.js can't be imported
+    // (happens in container runtime where @/lib webpack alias doesn't resolve).
+    getEffectiveLimits = await getFallbackGetEffectiveLimits();
   }
   for (const source of sources) {
     try {
@@ -1081,12 +1496,43 @@ export function hydrateFromRepo(sources) {
         console.warn("[quotaPool] hydrateFromRepo: skipping source without logicalId");
         continue;
       }
+      // F6: fetch effective limits so registerSource can build multi-window
+      // rate counters + quota state. Fail-open: any error → null config,
+      // which makes registerSource fall back to F5 single-window behavior.
+      let providerLimitsConfig = null;
+      if (getEffectiveLimits) {
+        try {
+          providerLimitsConfig = await getEffectiveLimits(
+            source.provider || "",
+            source.apiKey || "",
+            source.model || ""
+          );
+        } catch (e) {
+          f6GetEffectiveFailures++;
+          console.warn(`[quotaPool] hydrateFromRepo: getEffectiveLimits failed for ${source.provider}/${source.model}: ${e?.message || String(e)}`);
+        }
+      }
+      // Track F6 attachment stats
+      if (providerLimitsConfig) {
+        f6AttachedCount++;
+        if (!f6SampleAttached) {
+          f6SampleAttached = {
+            provider: source.provider,
+            model: source.model,
+            rateWindows: providerLimitsConfig.rateWindows?.length || 0,
+            quotaWindows: providerLimitsConfig.quotaWindows?.length || 0,
+          };
+        }
+      } else {
+        f6NullCount++;
+      }
       const id = registerSource(source.logicalId, {
         provider: source.provider || "",
         apiKey: source.apiKey || "",
         model: source.model || "",
         rpmLimit: source.rpmLimit,
         tpmLimit: source.tpmLimit,
+        providerLimitsConfig,
       });
       if (id) success++;
       else failed++;
@@ -1095,6 +1541,16 @@ export function hydrateFromRepo(sources) {
       console.warn(`[quotaPool] hydrateFromRepo: failed to register source: ${e?.message || String(e)}`);
     }
   }
+
+  // F6 attachment verification: confirm providerLimitsConfig was attached.
+  console.log(
+    `[quotaPool] hydrateFromRepo: F6 providerLimitsConfig attachment: ${f6AttachedCount} attached, ` +
+    `${f6NullCount} null (default-only or no config), ` +
+    `${f6GetEffectiveFailures} getEffectiveLimits failures` +
+    (f6SampleAttached
+      ? `, sample={provider:${f6SampleAttached.provider},model:${f6SampleAttached.model},rateWindows:${f6SampleAttached.rateWindows},quotaWindows:${f6SampleAttached.quotaWindows}}`
+      : "")
+  );
 
   // D4 (Bug #3): Asynchronously rehydrate persisted cooldown state.
   // Fire-and-forget + fail-open: this runs detached so the synchronous
@@ -1298,7 +1754,7 @@ export function consumeQuotaTokens(sourceId, tokens) {
 }
 
 /**
- * Reset quota windows whose period has elapsed (day / month boundaries).
+ * Reset quota windows whose period has elapsed (day / month / weekly / 5h).
  *
  * Mutates the source's f6Quota state in place: when periodStartMs falls before
  * the current UTC day/month boundary, `used` is reset to 0 and `periodStartMs`
@@ -1306,6 +1762,12 @@ export function consumeQuotaTokens(sourceId, tokens) {
  * actual consumption within the current period (fixes a bug where the period
  * reset was only applied to a local copy, making quota effectively unlimited
  * after the first boundary crossing).
+ *
+ * Dual-window support:
+ *   - weekly: rolling 7-day window (604800s). Resets when current time exceeds
+ *             periodStartMs + 604800*1000; new periodStartMs = current time.
+ *   - 5h:     rolling 5-hour window (18000s). Resets when current time exceeds
+ *             periodStartMs + 18000*1000; new periodStartMs = current time.
  *
  * Fail-open: any error or missing source → no-op.
  *
@@ -1331,6 +1793,20 @@ export function resetExpiredQuotaPeriods(sourceId) {
         if (periodStart < monthStart) {
           q.used = 0;
           q.periodStartMs = monthStart;
+        }
+      } else if (period === "weekly") {
+        // Rolling 7-day window: reset when 604800s elapsed since periodStart.
+        const WEEKLY_MS = 7 * 86400 * 1000;
+        if (periodStart === 0 || now >= periodStart + WEEKLY_MS) {
+          q.used = 0;
+          q.periodStartMs = now;
+        }
+      } else if (period === "5h") {
+        // Rolling 5-hour window: reset when 18000s elapsed since periodStart.
+        const FIVE_HOURS_MS = 5 * 3600 * 1000;
+        if (periodStart === 0 || now >= periodStart + FIVE_HOURS_MS) {
+          q.used = 0;
+          q.periodStartMs = now;
         }
       }
       // lifetime: never resets

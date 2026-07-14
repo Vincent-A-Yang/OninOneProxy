@@ -177,9 +177,20 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
             )}
             {isCooldown && connection.isActive !== false && <CooldownTimer until={modelLockUntil} />}
             {connection.lastError && connection.isActive !== false && (
-              <span className="max-w-full truncate text-xs text-red-500 sm:max-w-[300px]" title={connection.lastError}>
-                {connection.lastError}
-              </span>
+              <>
+                <span className="max-w-full truncate text-xs text-red-500 sm:max-w-[300px]" title={connection.lastError}>
+                  {connection.lastError}
+                </span>
+                {(() => {
+                  const errLower = (connection.lastError || "").toLowerCase();
+                  if (!errLower.includes("invalid_client") && !errLower.includes("invalid client")) return null;
+                  return (
+                    <Tooltip text="OAuth 客户端凭据无效。请检查 provider 的 client_id 和 client_secret 配置。可能原因：1) 凭据为占位符（YOUR_*）需替换为真实值 2) 凭据已过期 3) 凭据被吊销">
+                      <span className="material-symbols-outlined text-sm text-amber-500 cursor-help">help</span>
+                    </Tooltip>
+                  );
+                })()}
+              </>
             )}
             <span className="text-xs text-text-muted">#{connection.priority}</span>
             {connection.globalPriority && (

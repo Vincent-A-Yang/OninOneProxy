@@ -37,14 +37,18 @@ import {
 import {
   getLogicalModelId,
   registerSource,
-  selectSource,
+  selectSource, // @deprecated 2026-07-13: imported but unused — chat.js only calls selectSourceWithSticky (which calls selectSource internally inside quotaPool.js). Safe to remove this import line in a future cleanup.
+  selectSourceWithSticky,
+  STICKY_MODES,
   coolDown,
   isCooling,
   recordUsage,
   aggregateRetryAfter,
   getSourceCooldownReason,
+  recordFailure,
+  resetFailureCount,
 } from "open-sse/services/quotaPool.js";
-import { analyzeError, isProviderLimitsCooldown } from "open-sse/services/errorAnalyzer.js";
+import { analyzeError, isProviderLimitsCooldown, is5xxTransientError } from "open-sse/services/errorAnalyzer.js";
 // F3: Fake response detection (non-streaming validator + streaming quality guard)
 // Fail-open contract: both modules never throw on their own inputs; any
 // internal error returns a "valid" verdict so the main flow is never blocked.
@@ -65,7 +69,14 @@ import {
   checkRateLimit,
   checkQuotaLimit,
   consumeQuota,
+  learnLimitFromError,
 } from "open-sse/services/providerLimits.js";
+// Task 11: 模型淘汰重定向（provider 已淘汰模型时自动转发到替代模型，客户端无感知）
+import { getForwardingModel } from "open-sse/services/modelForwarding.js";
+// 401 即时重验证：fire-and-forget 触发 key 有效性检查，30s 去重避免重复触发
+import { triggerReverify } from "open-sse/services/authReverify.js";
+// Task 15: 动态查询 max_output_tokens（3 级 fallback + default）
+import { getMaxOutputTokens, getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
 
 // F3: apply cache config from settings once per process boot. Subsequent
 // settings changes are picked up on next request via getSettings() calls.
@@ -134,6 +145,11 @@ const F3_FAKE_COOLDOWN_SECONDS = 60;
 // produce infinite dispatches (matches the F5 retry cap convention).
 const F3_MAX_RETRIES = 3;
 
+// Wall-clock fallback budget: cap total time spent retrying across all
+// keys/providers for a single request. Prevents extreme waits when many
+// accounts fail slowly. 45s matches freellmapi's DEFAULT_FALLBACK_TIME_BUDGET_MS.
+const FALLBACK_TIME_BUDGET_MS = 45 * 1000;
+
 /**
  * Check whether a cooldown reason was set by the F3 fake-response validator
  * or stream guard. Used to skip a second cooldown from the F5 errorAnalyzer
@@ -184,16 +200,17 @@ function f3Reason(detectorReason) {
  *   response when wrapping fails (fail-open).
  */
 function wrapStreamingResponseWithGuard(response, ctx) {
-  const { f5SourceId, f5Enabled, log } = ctx;
+  const { f5SourceId, f5Enabled, log, isReasoningModel } = ctx;
   const originalBody = response?.body;
   if (!originalBody || typeof originalBody.pipeThrough !== "function") {
     return response;
   }
 
-  const guard = createStreamGuard({ loopThreshold: 10, minContentLength: 5 });
+  const guard = createStreamGuard({ loopThreshold: 10, minContentLength: 5, isReasoningModel });
   const decoder = new TextDecoder("utf-8", { fatal: false });
   let lineBuffer = "";
   let accumulatedContent = "";
+  let accumulatedThinking = "";
   let receivedDone = false;
   let streamAborted = false;
   let cooldownApplied = false;
@@ -238,6 +255,12 @@ function wrapStreamingResponseWithGuard(response, ctx) {
             accumulatedContent += delta.content;
           }
           const guardResult = guard.onChunk(parsed);
+          // Accumulate reasoning/thinking content for onComplete validation.
+          // extractChunkThinking covers OpenAI reasoning_content/reasoning,
+          // Claude/Kiro thinking, Anthropic delta.thinking.text shapes.
+          if (typeof guardResult?.thinking === "string") {
+            accumulatedThinking += guardResult.thinking;
+          }
           if (guardResult.action === "abort") {
             streamAborted = true;
             log.warn("FAKE", `流式响应循环检测: ${guardResult.reason} (source=${f5SourceId || "?"})`);
@@ -264,9 +287,13 @@ function wrapStreamingResponseWithGuard(response, ctx) {
           const data = trimmed.slice(5).trim();
           if (data === "[DONE]") receivedDone = true;
         }
-        const result = guard.onComplete(accumulatedContent, { receivedDone });
+        const result = guard.onComplete(accumulatedContent, {
+          receivedDone,
+          thinkingContent: accumulatedThinking,
+          isReasoningModel,
+        });
         if (!result.valid) {
-          log.warn("FAKE", `流式响应校验失败: ${result.reason} (source=${f5SourceId || "?"}, contentLen=${accumulatedContent.length}, done=${receivedDone})`);
+          log.warn("FAKE", `流式响应校验失败: ${result.reason} (source=${f5SourceId || "?"}, contentLen=${accumulatedContent.length}, thinkingLen=${accumulatedThinking.length}, done=${receivedDone}, isReasoning=${isReasoningModel})`);
           // F3.6: Stream interrupted with short content → retry-worthy.
           // The client already received the (short) stream so we can't
           // transparently retry; cool-down the source so the next request
@@ -556,6 +583,40 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   const { provider, model } = modelInfo;
 
+  // Task 11: 模型淘汰重定向 — 查询替代模型（若已配置转发规则）。
+  // Fail-open：任何异常返回原模型名，绝不阻塞请求。
+  // 客户端看到的 model 字段保持原模型名（upstreamModel 仅用于上游请求）。
+  let upstreamModel = model;
+  try {
+    upstreamModel = getForwardingModel(provider, model);
+    if (upstreamModel !== model) {
+      log.info("FORWARDING", `模型重定向: ${provider}/${model} → ${provider}/${upstreamModel} (客户端仍看到 ${model})`);
+    }
+  } catch (err) {
+    log.warn?.("FORWARDING", `getForwardingModel failed (fail-open): ${err?.message || err}`);
+    upstreamModel = model;
+  }
+
+  // Task 15: 动态查询 max_output_tokens 并应用到请求 body。
+  // 三级 fallback：Provider 精确 → Model 精确 → Pattern glob → DEFAULT。
+  // 用户显式设置的 max_tokens 若 <= 查询值则保持（用户优先），
+  // 未设置或 > 查询值时使用查询值（避免超出模型上限被 provider 拒绝）。
+  try {
+    const maxOut = getMaxOutputTokens(provider, model);
+    const userMax = body.max_tokens;
+    if (typeof userMax !== "number") {
+      body = { ...body, max_tokens: maxOut };
+      log.debug("TOKENS", `max_output_tokens=${maxOut} (fill, provider=${provider}, model=${model})`);
+    } else if (userMax > maxOut) {
+      body = { ...body, max_tokens: maxOut };
+      log.debug("TOKENS", `max_output_tokens=${maxOut} (clamp from ${userMax}, provider=${provider}, model=${model})`);
+    } else {
+      log.debug("TOKENS", `max_output_tokens=${userMax} (user, provider=${provider}, model=${model})`);
+    }
+  } catch (err) {
+    log.warn?.("TOKENS", `getMaxOutputTokens failed (fail-open): ${err?.message || err}`);
+  }
+
   // Log model routing (alias → actual model)
   if (modelStr !== `${provider}/${model}`) {
     log.info("ROUTING", `${modelStr} → ${provider}/${model}`);
@@ -617,14 +678,68 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   const f3SourcesTriedForFakeResponse = [];
   // === End F3 setup ===
 
+  // Wall-clock fallback budget: record start time to enforce a 45s cap on
+  // total retry time across all keys/providers. Prevents extreme waits when
+  // many accounts fail slowly (e.g. connect timeouts on 8 keys back-to-back).
+  const fallbackStartMs = Date.now();
+
+  // Task 14: 诊断 Header — 跟踪本次请求的故障转移次数和轨迹。
+  // 每次 credentials 确认可用后 push 一条 trail，最终响应时通过
+  // attachFallbackDiag 注入 X-Fallback-Attempts 和 X-Fallback-Trail header。
+  // 仅记录最近 5 条 trail 避免超长 header。
+  let fallbackAttempts = 0;
+  const fallbackTrail = [];
+  const FALLBACK_TRAIL_MAX = 5;
+
+  // Helper: clone response with diagnostic headers attached. Fail-open:
+  // any error returns the original response unchanged.
+  function attachFallbackDiag(response) {
+    try {
+      if (!response) return response;
+      const headers = new Headers(response.headers);
+      if (fallbackAttempts > 0) {
+        headers.set("X-Fallback-Attempts", String(fallbackAttempts));
+      }
+      if (fallbackTrail.length > 0) {
+        const trailStr = fallbackTrail
+          .map(t => `${t.provider}:${t.connectionName || (t.connectionId || "").slice(-6) || "?"}`)
+          .join("→");
+        headers.set("X-Fallback-Trail", trailStr);
+      }
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    } catch {
+      return response;
+    }
+  }
+
   while (true) {
+    // Wall-clock budget check: stop retrying if we've exceeded the total
+    // time budget. Returns the last error to the client rather than making
+    // them wait indefinitely.
+    if (Date.now() - fallbackStartMs > FALLBACK_TIME_BUDGET_MS) {
+      log.warn("FALLBACK", `Wall-clock budget exhausted (${FALLBACK_TIME_BUDGET_MS}ms), returning last error`);
+      if (lastError || lastStatus) {
+        return attachFallbackDiag(errorResponse(lastStatus || 503, lastError || "All sources failed within time budget"));
+      }
+      return attachFallbackDiag(errorResponse(503, "Fallback time budget exhausted"));
+    }
+
     // === C1: selectSource weighted load balancing ===
     // Prefer the source with the most remaining capacity (F6 weight =
     // min remaining capacity ratio across rate windows). Fail-open: any
     // selectSource error or null return falls back to sequential rotation.
+    // Task 12: selectSourceWithSticky wraps selection with sticky-session
+    // logic. In CACHE_FIRST mode this may await up to 60s polling the
+    // sticky source's cooldown — the await is non-blocking to the event
+    // loop (uses setTimeout-based sleep).
     if (f6Enabled && f5Enabled && f5LogicalId && !c1WeightedDisabled) {
       try {
-        const newPreferred = selectSource(f5LogicalId);
+        const stickyMode = f5Settings.stickySessionMode || STICKY_MODES.BALANCE;
+        const newPreferred = await selectSourceWithSticky(f5LogicalId, f5Settings);
         // Clear weighted excludes when preferred source changes so accounts
         // skipped for a previous preference are retried with the new one.
         if (newPreferred && c1PreferredSource &&
@@ -633,10 +748,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         }
         c1PreferredSource = newPreferred;
         if (c1PreferredSource) {
-          log.info("QUOTA", `加权选择生效 (sourceId=${c1PreferredSource.sourceId}, provider=${c1PreferredSource.provider})`);
+          log.info("QUOTA", `加权选择生效 (sourceId=${c1PreferredSource.sourceId}, provider=${c1PreferredSource.provider}, stickyMode=${stickyMode})`);
         }
       } catch (err) {
-        log.warn("QUOTA", `selectSource 异常: ${err?.message || err}, fail-open 回退顺序 fallback`);
+        log.warn("QUOTA", `selectSourceWithSticky 异常: ${err?.message || err}, fail-open 回退顺序 fallback`);
         c1PreferredSource = null;
         c1WeightedDisabled = true;
       }
@@ -666,14 +781,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = lastStatus || Number(credentials.lastErrorCode) || HTTP_STATUS.SERVICE_UNAVAILABLE;
         log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
-        return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman);
+        return attachFallbackDiag(unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman));
       }
       if (excludeConnectionIds.size === 0) {
         log.warn("AUTH", `No active credentials for provider: ${provider}`);
-        return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
+        return attachFallbackDiag(errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`));
       }
       log.warn("CHAT", "No more accounts available", { provider });
-      return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable");
+      return attachFallbackDiag(errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable"));
     }
 
     // C1: Weighted selection — if selectSource recommended a source and the
@@ -693,6 +808,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     // Log account selection
     log.info("AUTH", `\x1b[32mUsing ${provider} account: ${credentials.connectionName}\x1b[0m`);
+
+    // Task 14: 记录本次尝试到 fallbackTrail。
+    // 仅保留最近 FALLBACK_TRAIL_MAX 条，避免超长 header。
+    fallbackAttempts++;
+    fallbackTrail.push({
+      provider,
+      connectionName: credentials.connectionName || "",
+      connectionId: credentials.connectionId || "",
+      timestamp: Date.now(),
+    });
+    if (fallbackTrail.length > FALLBACK_TRAIL_MAX) {
+      fallbackTrail.shift();
+    }
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
@@ -738,6 +866,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           apiKey: refreshedCredentials.apiKey || credentials.apiKey || "",
           model,
           providerLimitsConfig,
+          connectionId: refreshedCredentials.connectionId || credentials.connectionId || "",
         });
         if (f5SourceId && isCooling(f5SourceId)) {
           log.info("QUOTA", `Source ${f5SourceId} cooling, skipping account ${credentials.connectionName}`);
@@ -772,11 +901,25 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       } catch { /* fail-open: fall through to original behavior */ }
     }
 
+    // Detect reasoning-capable model via capabilities metadata (covers all
+    // reasoning models: Claude thinking, GLM-5.x, Kimi-K2.x, DeepSeek, o1/o3,
+    // Grok, Qwen, Gemini, MiniMax, etc.). Used by chatCore for the 300s stall
+    // timeout and by the stream guard for thinking-interrupted detection.
+    // Fail-open: any capabilities lookup error falls back to false.
+    const isReasoningModel = (() => {
+      try {
+        const caps = getCapabilitiesForModel(provider, upstreamModel);
+        return caps?.reasoning === true || caps?.thinking === true;
+      } catch {
+        return false;
+      }
+    })();
+
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
     const result = await handleChatCore({
-      body: { ...body, model: `${provider}/${model}` },
+      body: { ...body, model: `${provider}/${upstreamModel}` },
       modelInfo: { provider, model },
       credentials: refreshedCredentials,
       log,
@@ -795,6 +938,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       ponytailEnabled: !!chatSettings.ponytailEnabled,
       ponytailLevel: chatSettings.ponytailLevel || "full",
       providerThinking,
+      isReasoningModel,
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       onCredentialsRefreshed: async (newCreds) => {
@@ -817,6 +961,17 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           tokens: result.usage?.total_tokens || 0,
         });
       } catch { /* fail-open */ }
+
+      // 成功后重置 failure_count，让退避阶梯归零。
+      // 5xx 临时故障本就不累加 failure_count，所以一旦请求成功，
+      // 之前累积的 429/quota 失败计数也应当清空，避免历史失败污染未来退避。
+      if (result.success) {
+        try {
+          resetFailureCount(f5SourceId);
+        } catch (err) {
+          log.warn("QUOTA", `resetFailureCount failed: ${err?.message || err}`);
+        }
+      }
 
       // F6: Deduct quota on successful requests (separate from rate counters
       // which are already incremented inside recordUsage). Fail-open.
@@ -888,7 +1043,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               // of the loop, which returns HTTP 503 unavailableResponse.)
               if (f3FakeRetryCount >= F3_MAX_RETRIES) {
                 log.warn("FAKE", `F3 retry limit (${F3_MAX_RETRIES}) reached, returning HTTP 502 fake_response_detected`);
-                return new Response(
+                return attachFallbackDiag(new Response(
                   JSON.stringify({
                     error: {
                       type: "fake_response_detected",
@@ -905,7 +1060,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
                       "Access-Control-Allow-Origin": "*",
                     },
                   }
-                );
+                ));
               }
               // F3.2: Exclude the current connection and retry via the
               // existing while loop (which re-enters C1 selectSource).
@@ -942,6 +1097,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             f5Enabled,
             coolDown,
             log,
+            isReasoningModel,
           });
         } catch (err) {
           // Fail-open: return the original response if wrapping fails.
@@ -949,7 +1105,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         }
       }
 
-      return result.response;
+      return attachFallbackDiag(result.response);
     }
 
     // F5: Intelligent error analysis — parse error text to classify the cause
@@ -982,8 +1138,47 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       } catch { /* fail-open */ }
     }
 
+    // Task 13: 从 429/402 错误体学习 Provider 限额。
+    // 在 analyzeError 之后、markAccountUnavailable 之前调用。
+    // Fail-open：任何解析错误不阻塞故障转移。
+    if (result.status === 429 || result.status === 402) {
+      try {
+        const errText = result.error || result.response?.statusText || "";
+        const learned = learnLimitFromError(provider, model, errText, result.headers, result.status);
+        if (learned) {
+          log.debug("PROVIDER-LIMITS", `learned from ${result.status}: ${provider}/${model} rpm=${learned.rpm || "n/a"}, tpm=${learned.tpm || "n/a"}, rps=${learned.rps || "n/a"}`);
+        }
+      } catch (err) {
+        log.warn?.("PROVIDER-LIMITS", `learnLimitFromError failed (fail-open): ${err?.message || err}`);
+      }
+    }
+
+    // F5: 精细退避分类 — 累加 failure_count 用于 computeBackoffMs 退避阶梯。
+    // 5xx 视为上游临时故障，is5xx=true 时不增加 failureCount，避免临时故障
+    // 污染 429/quota 类错误的退避阶梯；429/quota/4xx 等才真正累加计数。
+    // 放在 markAccountUnavailable 之前，确保退避状态在 fallback 决策时已更新。
+    if (f5Enabled && f5SourceId) {
+      try {
+        recordFailure(f5SourceId, { is5xx: is5xxTransientError(result.status) });
+      } catch (err) {
+        log.warn("QUOTA", `recordFailure failed: ${err?.message || err}`);
+      }
+    }
+
     // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise resetsAtMs)
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);
+
+    // 401 即时重验证：fire-and-forget 触发后台 key 有效性检查，不阻塞当前故障转移。
+    // 30s 去重确保同一 connectionId 不会重复触发。重验证失败会通过
+    // markAccountUnavailable 标记账号状态，下次轮到该 key 时自动跳过。
+    if (result.status === 401) {
+      try {
+        const triggered = triggerReverify(credentials.connectionId, provider);
+        if (triggered) {
+          log.info("AUTH", `401 触发即时重验证 (connectionId=${credentials.connectionId}, provider=${provider})`);
+        }
+      } catch { /* fail-open: 不阻塞故障转移 */ }
+    }
 
     if (shouldFallback) {
       log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
@@ -993,6 +1188,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       continue;
     }
 
-    return result.response;
+    return attachFallbackDiag(result.response);
   }
 }

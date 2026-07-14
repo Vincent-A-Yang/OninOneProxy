@@ -97,6 +97,163 @@ function loadQuotaPool() {
 }
 
 /**
+ * Local getEffectiveLimits — direct DB read, no ESM import.
+ *
+ * Why: providerLimits.js uses `@/lib/db/index.js` and `@/sse/utils/logger.js`
+ * (webpack aliases) which only resolve inside Next.js-compiled code. When
+ * d3-preregister.cjs imports providerLimits.js directly via `import()`,
+ * those aliases fail with "Cannot find package '@/lib'", causing
+ * loadProviderLimits to return null and all pre-registered sources to have
+ * f6Windows=null (the exact bug we are fixing).
+ *
+ * This local version reads the providerLimits table directly via better-sqlite3
+ * and replicates the 4-level priority chain of providerLimits.js:
+ *   1. source-level (provider + apiKeyMask + model)
+ *   2. model-level  (provider + model, scope=model)
+ *   3. provider-level (provider, scope=provider)
+ *   4. built-in DEFAULT_PROVIDER_LIMITS
+ *
+ * Returns { rateWindows: [], quotaWindows: [], quota: null } when no config
+ * exists (same fail-open contract as providerLimits.js).
+ */
+
+// Mirror of providerLimits.js DEFAULT_PROVIDER_LIMITS (kept in sync manually).
+const D3_DEFAULT_PROVIDER_LIMITS = {
+  nvidia:     { rateWindows: [{ window: 'minute', count: 40,  unit: 'request' }] },
+  openai:     { rateWindows: [{ window: 'minute', count: 500, unit: 'request' }] },
+  anthropic:  { rateWindows: [{ window: 'minute', count: 50,  unit: 'request' }] },
+  gemini:     { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+  azure:      { rateWindows: [{ window: 'minute', count: 480, unit: 'request' }] },
+  deepseek:   { rateWindows: [{ window: 'minute', count: 60,  unit: 'request' }] },
+};
+
+function d3BuildLimitsResult(cfg) {
+  const rateWindows = Array.isArray(cfg.rateWindows) ? cfg.rateWindows : [];
+  let quotaWindows = [];
+  if (Array.isArray(cfg.quotaWindows)) {
+    quotaWindows = cfg.quotaWindows;
+  } else if (cfg.quota && typeof cfg.quota === "object") {
+    quotaWindows = [cfg.quota];
+  }
+  return {
+    rateWindows,
+    quotaWindows,
+    quota: quotaWindows.length > 0 ? quotaWindows[0] : null,
+  };
+}
+
+function d3RowToConfig(row) {
+  if (!row) return null;
+  try {
+    let rateWindows = [];
+    try { rateWindows = JSON.parse(row.rateWindows || "[]"); } catch {}
+    let rawQuota = [];
+    try { rawQuota = JSON.parse(row.quota || "[]"); } catch {}
+    let quotaWindows;
+    if (Array.isArray(rawQuota)) {
+      quotaWindows = rawQuota;
+    } else if (rawQuota && typeof rawQuota === "object") {
+      quotaWindows = [rawQuota];
+    } else {
+      quotaWindows = [];
+    }
+    return {
+      id: row.id,
+      scope: row.scope,
+      provider: row.provider,
+      apiKeyMask: row.apiKeyMask ?? null,
+      model: row.model ?? null,
+      rateWindows,
+      quotaWindows,
+      quota: quotaWindows.length > 0 ? quotaWindows[0] : null,
+      enabled: row.enabled === 1,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Local getEffectiveLimits — reads providerLimits table directly.
+ * @param {object} db       - better-sqlite3 Database instance.
+ * @param {function} maskKey - quotaPool.maskKey function.
+ * @param {string} provider  - Provider id (e.g. "nvidia").
+ * @param {string} apiKey    - Raw API key (will be masked).
+ * @param {string} model     - Model name.
+ * @returns {{ rateWindows: Array, quotaWindows: Array, quota: object|null }}
+ */
+function localGetEffectiveLimits(db, maskKey, provider, apiKey, model) {
+  try {
+    if (!provider) return { rateWindows: [], quotaWindows: [], quota: null };
+    const apiKeyMask = maskKey(apiKey || "");
+
+    // 1. source-level (provider + apiKeyMask + model, scope=source)
+    try {
+      const rows = db.prepare(
+        `SELECT * FROM providerLimits WHERE scope = 'source' AND provider = ? AND apiKeyMask = ? AND model = ? AND enabled = 1`
+      ).all(provider, apiKeyMask, model || "");
+      for (const row of rows) {
+        const cfg = d3RowToConfig(row);
+        if (cfg) return d3BuildLimitsResult(cfg);
+      }
+    } catch (e) {
+      console.warn("[D3] localGetEffectiveLimits source-level failed:", e?.message || String(e));
+    }
+
+    // 2. model-level (provider + model, scope=model)
+    if (model) {
+      try {
+        const rows = db.prepare(
+          `SELECT * FROM providerLimits WHERE scope = 'model' AND provider = ? AND model = ? AND enabled = 1`
+        ).all(provider, model);
+        for (const row of rows) {
+          const cfg = d3RowToConfig(row);
+          if (cfg && (!cfg.scope || cfg.scope === "model")) {
+            return d3BuildLimitsResult(cfg);
+          }
+        }
+      } catch (e) {
+        console.warn("[D3] localGetEffectiveLimits model-level failed:", e?.message || String(e));
+      }
+    }
+
+    // 3. provider-level (provider, scope=provider)
+    try {
+      const rows = db.prepare(
+        `SELECT * FROM providerLimits WHERE provider = ? AND enabled = 1`
+      ).all(provider);
+      for (const row of rows) {
+        const cfg = d3RowToConfig(row);
+        if (cfg && (!cfg.scope || cfg.scope === "provider")) {
+          return d3BuildLimitsResult(cfg);
+        }
+      }
+    } catch (e) {
+      console.warn("[D3] localGetEffectiveLimits provider-level failed:", e?.message || String(e));
+    }
+
+    // 4. built-in default
+    const def = D3_DEFAULT_PROVIDER_LIMITS[provider];
+    if (def) return d3BuildLimitsResult(def);
+
+    return { rateWindows: [], quotaWindows: [], quota: null };
+  } catch (e) {
+    console.warn("[D3] localGetEffectiveLimits failed:", e?.message || String(e));
+    return { rateWindows: [], quotaWindows: [], quota: null };
+  }
+}
+
+/**
+ * Build a getEffectiveLimits wrapper bound to a db + maskKey.
+ * Returns a function with the same signature as providerLimits.getEffectiveLimits
+ * so runD3PreRegister can use it transparently.
+ */
+function makeLocalGetEffectiveLimits(db, maskKey) {
+  return (provider, apiKey, model) =>
+    Promise.resolve(localGetEffectiveLimits(db, maskKey, provider, apiKey, model));
+}
+
+/**
  * Collect (providerAlias, modelName) pairs from combos table.
  * Handles both formats:
  *   - string array: ["商汤/glm-5.2", "nvidia/z-ai/glm-5.2"]
@@ -223,6 +380,10 @@ async function runD3PreRegister() {
     db = new Database(DB_PATH, {});
     ensureSourcesTable(db);
     const { registerSource, getLogicalModelId, maskKey } = loadQuotaPool();
+    // Local getEffectiveLimits — reads providerLimits table directly via
+    // better-sqlite3 (bypasses @/lib webpack alias that breaks ESM import
+    // of providerLimits.js in custom-server.js runtime context).
+    const getEffectiveLimits = makeLocalGetEffectiveLimits(db, maskKey);
 
     const prefixMap = buildPrefixMap(db);
     const connsByProvider = getActiveApikeyConnsByProvider(db);
@@ -248,6 +409,11 @@ async function runD3PreRegister() {
     let registered = 0;
     let skipped = 0;
     let providersSeen = new Set();
+    // F6 verification stats: how many sources got non-null providerLimitsConfig.
+    let f6AttachedCount = 0;
+    let f6NullCount = 0;
+    let f6SampleAttached = null; // first non-null sample for log
+    let f6GetEffectiveFailures = 0;
 
     for (const pair of allPairs) {
       const sepIdx = pair.indexOf("|");
@@ -260,10 +426,54 @@ async function runD3PreRegister() {
       providersSeen.add(providerId);
       const logicalId = getLogicalModelId(`${alias}/${model}`);
       for (const conn of conns) {
+        // Fetch provider limits config (fail-open: null on any error).
+        let providerLimitsConfig = null;
+        if (getEffectiveLimits) {
+          try {
+            providerLimitsConfig = await getEffectiveLimits(
+              providerId,
+              conn.apiKey,
+              model
+            );
+            // Drop empty/no-op config to keep registerSource input clean.
+            if (
+              providerLimitsConfig &&
+              (!providerLimitsConfig.rateWindows ||
+                providerLimitsConfig.rateWindows.length === 0) &&
+              (!providerLimitsConfig.quotaWindows ||
+                providerLimitsConfig.quotaWindows.length === 0) &&
+              !providerLimitsConfig.quota
+            ) {
+              providerLimitsConfig = null;
+            }
+          } catch (err) {
+            console.warn(
+              "[D3] getEffectiveLimits failed:",
+              err?.message || String(err)
+            );
+            providerLimitsConfig = null;
+            f6GetEffectiveFailures++;
+          }
+        }
+        // Track F6 attachment stats
+        if (providerLimitsConfig) {
+          f6AttachedCount++;
+          if (!f6SampleAttached) {
+            f6SampleAttached = {
+              provider: providerId,
+              model,
+              rateWindows: providerLimitsConfig.rateWindows?.length || 0,
+              quotaWindows: providerLimitsConfig.quotaWindows?.length || 0,
+            };
+          }
+        } else {
+          f6NullCount++;
+        }
         const id = registerSource(logicalId, {
           provider: providerId,
           apiKey: conn.apiKey,
           model,
+          providerLimitsConfig,
         });
         if (id) {
           registered++;
@@ -293,6 +503,15 @@ async function runD3PreRegister() {
       `(${skipped} skipped, ${providersSeen.size} providers, ` +
       `${comboPairs.size} combo pairs + ${defaultModelPairs.size} defaultModel pairs, ` +
       `db rows: ${dbRows})`
+    );
+    // F6 attachment verification: confirm providerLimitsConfig was attached.
+    console.log(
+      `[D3] F6 providerLimitsConfig attachment: ${f6AttachedCount} attached, ` +
+      `${f6NullCount} null (default-only or no config), ` +
+      `${f6GetEffectiveFailures} getEffectiveLimits failures` +
+      (f6SampleAttached
+        ? `, sample={provider:${f6SampleAttached.provider},model:${f6SampleAttached.model},rateWindows:${f6SampleAttached.rateWindows},quotaWindows:${f6SampleAttached.quotaWindows}}`
+        : "")
     );
   } catch (e) {
     // Fail-open: never break app init.

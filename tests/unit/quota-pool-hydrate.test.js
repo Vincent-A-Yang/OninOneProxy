@@ -23,12 +23,12 @@ beforeEach(() => {
 });
 
 describe("quotaPool.hydrateFromRepo", () => {
-  it("scenario 1: empty array → {total:0, success:0, failed:0}", () => {
-    const result = hydrateFromRepo([]);
+  it("scenario 1: empty array → {total:0, success:0, failed:0}", async () => {
+    const result = await hydrateFromRepo([]);
     expect(result).toEqual({ total: 0, success: 0, failed: 0 });
   });
 
-  it("scenario 2: 3 valid sources → {total:3, success:3, failed:0} + registered in memory", () => {
+  it("scenario 2: 3 valid sources → {total:3, success:3, failed:0} + registered in memory", async () => {
     const sources = [
       {
         sourceId: "nvidia|sk-1***abcd|llama-3.1",
@@ -59,7 +59,7 @@ describe("quotaPool.hydrateFromRepo", () => {
       },
     ];
 
-    const result = hydrateFromRepo(sources);
+    const result = await hydrateFromRepo(sources);
     expect(result).toEqual({ total: 3, success: 3, failed: 0 });
 
     // Verify the sources were actually registered in the in-memory pool.
@@ -84,7 +84,7 @@ describe("quotaPool.hydrateFromRepo", () => {
     expect(getAvailableSources("claude-3")).toHaveLength(1);
   });
 
-  it("scenario 3: 1 invalid (no logicalId) + 2 valid → {total:3, success:2, failed:1}", () => {
+  it("scenario 3: 1 invalid (no logicalId) + 2 valid → {total:3, success:2, failed:1}", async () => {
     const sources = [
       // Invalid: missing logicalId → should fail (counted as failed).
       {
@@ -118,7 +118,7 @@ describe("quotaPool.hydrateFromRepo", () => {
       },
     ];
 
-    const result = hydrateFromRepo(sources);
+    const result = await hydrateFromRepo(sources);
     expect(result).toEqual({ total: 3, success: 2, failed: 1 });
 
     // The 2 valid sources should be registered.

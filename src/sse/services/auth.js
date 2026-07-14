@@ -32,17 +32,56 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Resolve alias to provider ID (e.g., "kc" -> "kilocode")
     const providerId = resolveProviderId(provider);
 
-    // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings)
+    // Inject a virtual connection for no-auth free providers (with optional proxy pool from settings).
+    // OmniRoute-style multi-instance: query virtual connections from DB so each
+    // instance gets a distinct connectionId. Without this, all noAuth instances
+    // collapse into a single source (makeSourceId produces identical ids when
+    // apiKey is empty) and only the first instance ever receives traffic.
     if (FREE_PROVIDERS[providerId]?.noAuth) {
       const settings = await getSettings();
       const override = (settings.providerStrategies || {})[providerId] || {};
       const resolvedProxy = await resolveConnectionProxyConfig({ proxyPoolId: override.proxyPoolId || "" });
+
+      const connections = await getProviderConnections({ provider: providerId, isActive: true });
+      const availableConnections = connections.filter(c => !excludeSet.has(c.id));
+
+      if (availableConnections.length === 0) {
+        // Legacy fallback: no virtual instances configured — return the
+        // original single "noauth" connection for backward compatibility.
+        log.debug("AUTH", `${provider} | noAuth no virtual instances, falling back to legacy noauth`);
+        return {
+          id: "noauth",
+          connectionName: "Public",
+          isActive: true,
+          accessToken: "public",
+          providerSpecificData: {
+            connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
+            connectionProxyUrl: resolvedProxy.connectionProxyUrl,
+            connectionNoProxy: resolvedProxy.connectionNoProxy,
+            connectionProxyPoolId: resolvedProxy.proxyPoolId || null,
+            vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
+          },
+        };
+      }
+
+      // Fill-first selection (connections are already sorted by priority).
+      // Preferred connection takes precedence if provided and available.
+      const preferredConnectionId = options?.preferredConnectionId || null;
+      const connection = (preferredConnectionId && availableConnections.find(c => c.id === preferredConnectionId))
+        || availableConnections[0];
+
+      log.debug("AUTH", `${provider} | noAuth selected ${connection.id?.slice(0, 8)} (${connection.name || "unnamed"}) from ${availableConnections.length}/${connections.length}`);
+
       return {
-        id: "noauth",
-        connectionName: "Public",
+        id: connection.id,
+        connectionId: connection.id,
+        connectionName: connection.displayName || connection.name || connection.id,
         isActive: true,
+        authType: "noauth",
+        apiKey: "",
         accessToken: "public",
         providerSpecificData: {
+          ...(connection.providerSpecificData || {}),
           connectionProxyEnabled: resolvedProxy.connectionProxyEnabled,
           connectionProxyUrl: resolvedProxy.connectionProxyUrl,
           connectionNoProxy: resolvedProxy.connectionNoProxy,

@@ -1,6 +1,14 @@
 import path from "node:path";
 import fs from "node:fs";
-import { DATA_DIR } from "@/lib/dataDir.js";
+// Use relative path (not "@/lib/dataDir.js") because this module is loaded by
+// custom-server.js via dynamic import() which runs under Node's native ESM
+// resolver — it does not understand jsconfig paths like "@/lib/...".
+// Next.js API routes still work because webpack resolves both "@/lib/..." and
+// relative paths equally.
+//
+// Path math: paths.js is at src/lib/db/paths.js; dataDir.js is at src/lib/dataDir.js.
+// From src/lib/db/ → "../" → src/lib/ → "dataDir.js" → src/lib/dataDir.js.
+import { DATA_DIR } from "../dataDir.js";
 
 export const DB_DIR = path.join(DATA_DIR, "db");
 export const DATA_FILE = path.join(DB_DIR, "data.sqlite");

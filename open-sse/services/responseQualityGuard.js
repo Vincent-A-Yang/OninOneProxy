@@ -73,6 +73,49 @@ function extractChunkText(chunk) {
 }
 
 /**
+ * Extract a thinking/reasoning fragment from an SSE chunk.
+ *
+ * Covers:
+ *   - { choices: [{ delta: { reasoning_content } }] } (OpenAI-style reasoning)
+ *   - { choices: [{ delta: { reasoning } }] }         (OpenAI Responses API)
+ *   - { choices: [{ delta: { thinking } }] }          (Claude/Kiro)
+ *   - { delta: { thinking: { text } } }               (Anthropic extended)
+ *   - { reasoning } | { thinking }                    (bare)
+ *
+ * Returns "" when no thinking content is present.
+ */
+function extractChunkThinking(chunk) {
+  if (chunk == null) return "";
+  if (typeof chunk !== "object") return "";
+
+  const choices = chunk.choices;
+  if (Array.isArray(choices) && choices[0]) {
+    const delta = choices[0].delta;
+    if (delta) {
+      if (typeof delta.reasoning_content === "string") return delta.reasoning_content;
+      if (typeof delta.reasoning === "string") return delta.reasoning;
+      if (typeof delta.thinking === "string") return delta.thinking;
+      // Nested thinking.text shape (Anthropic extended thinking via choices[0].delta)
+      if (delta.thinking && typeof delta.thinking.text === "string") {
+        return delta.thinking.text;
+      }
+    }
+    if (typeof choices[0].reasoning === "string") return choices[0].reasoning;
+    if (typeof choices[0].thinking === "string") return choices[0].thinking;
+  }
+
+  if (chunk.delta && typeof chunk.delta.thinking === "string") return chunk.delta.thinking;
+  if (chunk.delta && chunk.delta.thinking && typeof chunk.delta.thinking.text === "string") {
+    return chunk.delta.thinking.text;
+  }
+
+  if (typeof chunk.reasoning === "string") return chunk.reasoning;
+  if (typeof chunk.thinking === "string") return chunk.thinking;
+
+  return "";
+}
+
+/**
  * Normalize a chunk fragment for loop comparison.
  *
  * Whitespace-only fragments are collapsed to a single canonical " " marker so
@@ -190,6 +233,7 @@ function sweepDedupCache(now, windowMs) {
  * @param {number}  [options.loopThreshold=10]        - Consecutive identical token count that aborts the stream.
  * @param {number}  [options.minContentLength=5]     - Minimum accumulated content length on complete.
  * @param {number}  [options.duplicateWindowMs=60000] - Prompt→response dedup window in ms.
+ * @param {boolean} [options.isReasoningModel=false]  - Whether the upstream model emits reasoning/thinking content (allows empty final content).
  * @returns {Object} Guard instance with onChunk / onComplete / onError / checkDuplicate.
  */
 export function createStreamGuard(options = {}) {
@@ -213,6 +257,7 @@ export function createStreamGuard(options = {}) {
     0,
     24 * 60 * 60 * 1000
   );
+  const isReasoningModel = options.isReasoningModel === true;
 
   // --- Per-stream state ---
   // Fixed-capacity ring buffer (pre-allocated, never grows → no memory leak).
@@ -232,8 +277,12 @@ export function createStreamGuard(options = {}) {
      * the latch stays set so subsequent calls keep signaling abort until the
      * caller stops the stream.
      *
+     * The returned `thinking` field is the reasoning/thinking text fragment
+     * found in this chunk, if any. The caller may accumulate it separately for
+     * end-of-stream validation.
+     *
      * @param {Object} chunk - SSE chunk (any shape; text is extracted heuristically).
-     * @returns {{ action: 'continue' | 'abort', reason?: string }}
+     * @returns {{ action: 'continue' | 'abort', reason?: string, thinking?: string }}
      */
     onChunk(chunk) {
       try {
@@ -242,11 +291,13 @@ export function createStreamGuard(options = {}) {
           return { action: "abort", reason: "output-loop" };
         }
 
+        const thinking = extractChunkThinking(chunk);
+
         const text = extractChunkText(chunk);
         const token = normalizeToken(text);
         if (token === "") {
           // Nothing to compare — allow through.
-          return { action: "continue" };
+          return { action: "continue", thinking };
         }
 
         // Write into the ring buffer (overwrites oldest when full).
@@ -256,15 +307,15 @@ export function createStreamGuard(options = {}) {
 
         // Need a full ring to evaluate a loop of `loopThreshold` tokens.
         if (ringLen < loopThreshold) {
-          return { action: "continue" };
+          return { action: "continue", thinking };
         }
 
         if (allEqual(ring, ringLen)) {
           loopTripped = true;
-          return { action: "abort", reason: "output-loop" };
+          return { action: "abort", reason: "output-loop", thinking };
         }
 
-        return { action: "continue" };
+        return { action: "continue", thinking };
       } catch {
         // Fail-open: never interrupt the stream due to a guard error.
         return { action: "continue" };
@@ -276,27 +327,48 @@ export function createStreamGuard(options = {}) {
      *
      * Validation order (diagnostically clean, no overlap):
      *   1. No [DONE] + short content → "stream-interrupted" (cut off mid-stream)
+     *      For reasoning models with no thinking content: "thinking-interrupted"
      *   2. No [DONE] + OK content    → tolerate, valid:true, action:'return'
      *   3. [DONE] + short content    → "invalid-response" (model finished but output bad)
      *   4. [DONE] + OK content       → valid:true
+     *
+     * Reasoning/thinking content counts toward the effective response length so
+     * that models which emit reasoning but little final text (e.g. Claude
+     * thinking, DeepSeek, GLM-5.2, Kimi-K2.x) are not falsely flagged as
+     * interrupted.
      *
      * @param {string}  accumulatedContent - Full accumulated content.
      * @param {Object}  [metadata]
      * @param {boolean} [metadata.receivedDone]  - Whether a [DONE] terminator was seen.
      * @param {number}  [metadata.totalTokens]   - Optional total token count.
      * @param {string}  [metadata.finishReason]  - Upstream finish_reason.
+     * @param {string}  [metadata.thinkingContent] - Accumulated reasoning/thinking text.
      * @returns {{ valid: boolean, reason?: string, action?: 'retry' | 'return' }}
      */
     onComplete(accumulatedContent, metadata = {}) {
       try {
         const content =
           typeof accumulatedContent === "string" ? accumulatedContent : "";
+        const thinkingContent =
+          metadata && typeof metadata.thinkingContent === "string"
+            ? metadata.thinkingContent
+            : "";
         const receivedDone = metadata && metadata.receivedDone === true;
-        const isShort = content.length < minContentLength;
+        const effectiveContent = content + thinkingContent;
+        const isShort = effectiveContent.length < minContentLength;
+        const receivedThinking = thinkingContent.length > 0;
 
         // 1-2. Stream interruption: missing [DONE] terminator.
         if (!receivedDone) {
           if (isShort) {
+            // Reasoning model cut off before producing any visible output.
+            if (isReasoningModel && !receivedThinking) {
+              return {
+                valid: false,
+                reason: "thinking-interrupted",
+                action: "retry",
+              };
+            }
             // Stream cut off before producing meaningful content.
             return {
               valid: false,

@@ -1,5 +1,5 @@
 // Stream handler with disconnect detection - shared for all providers
-import { STREAM_STALL_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { STREAM_STALL_TIMEOUT_MS, STREAM_REASONING_STALL_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
 // Get HH:MM:SS timestamp
@@ -181,19 +181,25 @@ export function createDisconnectAwareStream(transformStream, streamController, o
  * "failed to pipe response" error in Next.
  *
  * Any upstream chunk resets the timer. If no bytes arrive for
- * STREAM_STALL_TIMEOUT_MS, abort the underlying fetch via the controller.
+ * STREAM_STALL_TIMEOUT_MS (or STREAM_REASONING_STALL_TIMEOUT_MS for reasoning
+ * models), abort the underlying fetch via the controller.
  *
  * @param {Response} providerResponse - Response from provider
  * @param {TransformStream} transformStream - Transform stream for SSE
  * @param {object} streamController - Stream controller from createStreamController
+ * @param {function|null} onAbortTerminal - Optional terminal payload builder
+ * @param {number} stallTimeoutMs - Normal stall timeout (ms)
+ * @param {number} reasoningStallTimeoutMs - Stall timeout when isReasoningModel is true
+ * @param {boolean} isReasoningModel - Whether the model is a reasoning model (longer stall timeout)
  */
-export function pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal = null, stallTimeoutMs = STREAM_STALL_TIMEOUT_MS) {
+export function pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal = null, stallTimeoutMs = STREAM_STALL_TIMEOUT_MS, reasoningStallTimeoutMs = STREAM_REASONING_STALL_TIMEOUT_MS, isReasoningModel = false) {
   let stallTimer = null;
   let chunkCount = 0;
   let totalBytes = 0;
   let lastChunkAt = Date.now();
   const t0 = Date.now();
   const tag = "STREAM";
+  const effectiveStallTimeoutMs = isReasoningModel ? reasoningStallTimeoutMs : stallTimeoutMs;
   const clearStall = () => {
     if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
   };
@@ -201,10 +207,10 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
     clearStall();
     stallTimer = setTimeout(() => {
       stallTimer = null;
-      dbg(tag, `STALL TIMEOUT ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
+      dbg(tag, `STALL TIMEOUT ${effectiveStallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
       streamController.handleError?.(new Error("stream stall timeout"));
       streamController.abort?.();
-    }, stallTimeoutMs);
+    }, effectiveStallTimeoutMs);
   };
 
   // Wrap controller so every termination path clears the stall timer.
@@ -221,7 +227,7 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
   };
 
   armStall();
-  dbg(tag, `pipe start | stallTimeout=${stallTimeoutMs}ms`);
+  dbg(tag, `pipe start | stallTimeout=${effectiveStallTimeoutMs}ms | reasoning=${isReasoningModel}`);
 
   const upstreamTap = new TransformStream({
     transform(chunk, controller) {

@@ -55,11 +55,16 @@ const SMART_ROUTER_TICK_MS = 6 * MS_PER_HOUR;
 async function runSmartRouterTick() {
   try {
     const optimizerMod = await import("./open-sse/services/smartRouter.js").catch(() => null);
-    const dbMod = await import("./src/lib/db/index.js").catch(() => null);
-    if (!optimizerMod || !dbMod) return; // modules not available (still booting?)
+    // Direct repo imports (not barrel `db/index.js`) because the barrel re-exports
+    // connectionsRepo.js which depends on `@/shared/constants/providers` — a
+    // webpack alias unavailable under Node native ESM in standalone build.
+    const settingsMod = await import("./src/lib/db/repos/settingsRepo.js").catch(() => null);
+    const combosMod = await import("./src/lib/db/repos/combosRepo.js").catch(() => null);
+    if (!optimizerMod || !settingsMod || !combosMod) return; // modules not available (still booting?)
 
     const { optimizeCombo } = optimizerMod;
-    const { getSettings, getCombos } = dbMod;
+    const { getSettings } = settingsMod;
+    const { getCombos } = combosMod;
     if (typeof optimizeCombo !== "function" ||
         typeof getSettings !== "function" ||
         typeof getCombos !== "function") {
@@ -125,9 +130,11 @@ const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
 
 async function runCleanupTick() {
   try {
-    const dbMod = await import("./src/lib/db/index.js").catch(() => null);
-    if (!dbMod) return; // modules not available (still booting?)
-    const { getSettings } = dbMod;
+    // Direct repo import (not barrel `db/index.js`) — see runSmartRouterTick
+    // comment for rationale on bypassing the barrel.
+    const settingsMod = await import("./src/lib/db/repos/settingsRepo.js").catch(() => null);
+    if (!settingsMod) return; // modules not available (still booting?)
+    const { getSettings } = settingsMod;
     if (typeof getSettings !== "function") return;
 
     const settings = await getSettings();
@@ -248,6 +255,77 @@ function registerMemoryMonitor() {
 import("./d3-preregister.cjs")
   .then((mod) => mod?.default?.runD3PreRegister?.() || mod?.runD3PreRegister?.())
   .catch((e) => console.warn("[D3] pre-register failed:", e?.message || String(e)));
+
+// === Task 16: requestDetails 30-day retention cleanup scheduler ===
+//
+// Starts a recurring sweep that purges request monitoring rows older than 30
+// days from the requestDetails table (see cleanupScheduler.js). Registered
+// after D3 pre-registration so the quota pool is warm before the first sweep.
+// Fail-open: if the scheduler module fails to load the server still boots.
+// On SIGINT/SIGTERM the scheduler is stopped so no stray timer fires during
+// shutdown.
+import("./src/lib/db/cleanupScheduler.js")
+  .then((mod) => {
+    if (mod && typeof mod.startCleanupScheduler === "function") {
+      mod.startCleanupScheduler();
+      console.log("[cleanupScheduler] registered requestDetails 30-day retention cleanup");
+      const stop = () => {
+        try { mod.stopCleanupScheduler(); } catch {}
+      };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+    }
+  })
+  .catch((e) => console.warn("[cleanupScheduler] failed to start:", e?.message || String(e)));
+
+// === Task 10: Model Sync scheduler ===
+//
+// Starts modelSyncService.startSyncScheduler at boot if
+// settings.modelSyncEnabled is true and modelSyncFrequency is not "manual".
+// The scheduler pulls provider /models endpoints and updates model params
+// in DB kv (see open-sse/services/modelSync.js).
+//
+// Design (matches cleanupScheduler):
+//   - Fail-open: if the service module fails to load the server still boots.
+//   - Lazy import: modelSync.js is ESM; CJS custom-server uses dynamic import.
+//   - SIGINT/SIGTERM: stopSyncScheduler is called so no stray timer fires.
+//   - Runtime toggle: PATCH /api/models/sync applies changes immediately
+//     without restart (re-calls start/stopSyncScheduler).
+const MODEL_SYNC_FREQ_TO_MS = {
+  hourly: 60 * 60 * 1000,
+  "12h": 12 * 60 * 60 * 1000,
+  daily: 24 * 60 * 60 * 1000,
+  manual: 0,
+};
+
+import("./open-sse/services/modelSync.js")
+  .then(async (mod) => {
+    if (!mod?.modelSyncService || typeof mod.modelSyncService.startSyncScheduler !== "function") return;
+    try {
+      // Direct repo import (not barrel `db/index.js`) — see runSmartRouterTick
+      // comment for rationale on bypassing the barrel.
+      const settingsMod = await import("./src/lib/db/repos/settingsRepo.js").catch(() => null);
+      if (!settingsMod || typeof settingsMod.getSettings !== "function") return;
+      const settings = await settingsMod.getSettings();
+      const freq = settings?.modelSyncFrequency || "manual";
+      const enabled = settings?.modelSyncEnabled === true;
+      const intervalMs = MODEL_SYNC_FREQ_TO_MS[freq] || 0;
+      if (enabled && intervalMs > 0) {
+        mod.modelSyncService.startSyncScheduler(intervalMs);
+        console.log(`[MODEL-SYNC] scheduler started: every ${Math.round(intervalMs / 3600000)}h (freq=${freq})`);
+      } else {
+        console.log(`[MODEL-SYNC] scheduler not started (enabled=${enabled}, freq=${freq})`);
+      }
+      const stop = () => {
+        try { mod.modelSyncService.stopSyncScheduler(); } catch {}
+      };
+      process.on("SIGINT", stop);
+      process.on("SIGTERM", stop);
+    } catch (e) {
+      console.warn("[MODEL-SYNC] boot scheduler start failed:", e?.message || String(e));
+    }
+  })
+  .catch((e) => console.warn("[MODEL-SYNC] module load failed:", e?.message || String(e)));
 
 // Boot the Next standalone server last, after all wrappers and timers above
 // are registered. Static `import` would be hoisted to module top and break

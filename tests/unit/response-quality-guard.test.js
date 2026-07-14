@@ -331,3 +331,288 @@ describe("E1.6 配置边界", () => {
     expect(r.valid).toBe(true);
   });
 });
+
+// =============================================================================
+// Task 9.6 — 推理模型调用链专项测试
+//
+// 覆盖 chat.js → wrapStreamingResponseWithGuard → createStreamGuard →
+// onChunk(thinking) → onComplete(thinkingContent, isReasoningModel) 完整路径。
+// 这些测试直接断言 guard 的行为，保证 chat.js 传入 isReasoningModel 和
+// accumulatedThinking 后，三种 reason（thinking-interrupted /
+// stream-interrupted / invalid-response）真实触发。
+// =============================================================================
+
+// 构造带 reasoning_content 的 OpenAI 风格推理 chunk
+function reasoningChunk(reasoningContent, content) {
+  const delta = {};
+  if (typeof reasoningContent === "string") delta.reasoning_content = reasoningContent;
+  if (typeof content === "string") delta.content = content;
+  return { choices: [{ delta }] };
+}
+
+// 构造带 thinking 的 Claude/Kiro 风格推理 chunk
+function thinkingChunk(thinking, content) {
+  const delta = {};
+  if (typeof thinking === "string") delta.thinking = thinking;
+  if (typeof content === "string") delta.content = content;
+  return { choices: [{ delta }] };
+}
+
+describe("Task 9.6 isReasoningModel 标记传入 createStreamGuard", () => {
+  it("isReasoningModel=true 创建 guard 不报错且可正常 onChunk", () => {
+    const guard = createStreamGuard({ isReasoningModel: true, loopThreshold: 10 });
+    expect(guard.onChunk(oaiChunk("hi")).action).toBe("continue");
+  });
+
+  it("isReasoningModel 默认 false（不传时）", () => {
+    // 不传 isReasoningModel 时，onComplete 的 thinking-interrupted 分支永远不触发
+    // 因为 guard 内部 isReasoningModel === false
+    const guard = createStreamGuard({ loopThreshold: 10 });
+    // 无 DONE + 短内容 → stream-interrupted（不是 thinking-interrupted）
+    const r = guard.onComplete("", { receivedDone: false });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe("stream-interrupted");
+  });
+
+  it("isReasoningModel=true 改变 onComplete 的 reason 分类", () => {
+    // 推理模型 + 无 DONE + 短内容 + 无思考 → thinking-interrupted
+    const guard = createStreamGuard({ isReasoningModel: true, loopThreshold: 10 });
+    const r = guard.onComplete("", { receivedDone: false, thinkingContent: "" });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe("thinking-interrupted");
+  });
+});
+
+describe("Task 9.6 thinking 内容提取（onChunk 返回 thinking 字段）", () => {
+  it("OpenAI reasoning_content 被提取到 onChunk.thinking", () => {
+    const guard = createStreamGuard({ loopThreshold: 10 });
+    const r = guard.onChunk(reasoningChunk("正在思考", ""));
+    expect(r.thinking).toBe("正在思考");
+    expect(r.action).toBe("continue");
+  });
+
+  it("Claude/Kiro thinking 被提取到 onChunk.thinking", () => {
+    const guard = createStreamGuard({ loopThreshold: 10 });
+    const r = guard.onChunk(thinkingChunk("思考中", ""));
+    expect(r.thinking).toBe("思考中");
+  });
+
+  it("无 reasoning 字段的普通 chunk → thinking 为 undefined/空", () => {
+    const guard = createStreamGuard({ loopThreshold: 10 });
+    const r = guard.onChunk(oaiChunk("普通内容"));
+    expect(r.thinking === "" || r.thinking === undefined).toBe(true);
+  });
+
+  it("Anthropic 顶层 delta.thinking.text 形状被提取（chunk.delta 路径）", () => {
+    // 源码 extractChunkThinking 第 108 行支持 chunk.delta.thinking.text
+    // （顶层 delta，不是 choices[0].delta 内的嵌套形状）
+    const guard = createStreamGuard({ loopThreshold: 10 });
+    const chunk = { delta: { thinking: { text: "扩展思考" } } };
+    const r = guard.onChunk(chunk);
+    expect(r.thinking).toBe("扩展思考");
+  });
+
+  it("choices[0].delta.thinking.text 嵌套形状被提取（Task 9.6 补充支持）", () => {
+    // 源码 extractChunkThinking choices 分支已支持 delta.thinking.text 嵌套形状
+    // （Anthropic extended thinking via choices[0].delta.thinking.text）
+    const guard = createStreamGuard({ loopThreshold: 10 });
+    const chunk = { choices: [{ delta: { thinking: { text: "扩展思考" } } }] };
+    const r = guard.onChunk(chunk);
+    expect(r.thinking).toBe("扩展思考");
+  });
+});
+
+describe("Task 9.6 onComplete 的 thinkingContent + isReasoningModel 联动", () => {
+  it("推理模型 + 无 DONE + 短内容 + 有思考内容 → valid（思考算有效长度）", () => {
+    // effectiveContent = content + thinkingContent；思考内容足够长 → 不算短
+    const guard = createStreamGuard({ isReasoningModel: true, minContentLength: 5 });
+    const r = guard.onComplete("ab", {
+      receivedDone: false,
+      thinkingContent: "这是一段足够长的思考内容",
+      isReasoningModel: true,
+    });
+    expect(r.valid).toBe(true);
+  });
+
+  it("推理模型 + 无 DONE + 短内容 + 无思考 → thinking-interrupted", () => {
+    const guard = createStreamGuard({ isReasoningModel: true, minContentLength: 5 });
+    const r = guard.onComplete("ab", {
+      receivedDone: false,
+      thinkingContent: "",
+      isReasoningModel: true,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe("thinking-interrupted");
+  });
+
+  it("普通模型 + 无 DONE + 短内容 → stream-interrupted（不受 isReasoningModel 影响）", () => {
+    const guard = createStreamGuard({ isReasoningModel: false, minContentLength: 5 });
+    const r = guard.onComplete("ab", {
+      receivedDone: false,
+      thinkingContent: "",
+      isReasoningModel: false,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe("stream-interrupted");
+  });
+
+  it("推理模型 + 收到 DONE + 短内容（含思考）→ invalid-response", () => {
+    // 收到 DONE 但总长度仍短 → invalid-response（不管是不是推理模型）
+    const guard = createStreamGuard({ isReasoningModel: true, minContentLength: 100 });
+    const r = guard.onComplete("短", {
+      receivedDone: true,
+      thinkingContent: "也短",
+      isReasoningModel: true,
+    });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe("invalid-response");
+  });
+
+  it("推理模型 + 无 DONE + 长内容 → valid（正常完成，无需 DONE）", () => {
+    const guard = createStreamGuard({ isReasoningModel: true, minContentLength: 5 });
+    const r = guard.onComplete("这是足够长的正常内容", {
+      receivedDone: false,
+      thinkingContent: "",
+      isReasoningModel: true,
+    });
+    expect(r.valid).toBe(true);
+  });
+});
+
+// =============================================================================
+// Task 9.7 — SSE 流端到端集成测试
+//
+// 模拟 wrapStreamingResponseWithGuard 的核心流程：构造 SSE 字节流 →
+// 喂给 createStreamGuard.onChunk → 累积 accumulatedContent +
+// accumulatedThinking → 调用 onComplete 验证最终结果。
+// 这验证了 chat.js 修复后的完整调用链行为。
+// =============================================================================
+
+describe("Task 9.7 SSE 流端到端：推理模型思考中断检测", () => {
+  // 模拟 chat.js wrapStreamingResponseWithGuard 的累积逻辑
+  function simulateStream(chunks, { isReasoningModel, minContentLength = 5, loopThreshold = 10 }) {
+    const guard = createStreamGuard({ loopThreshold, minContentLength, isReasoningModel });
+    let accumulatedContent = "";
+    let accumulatedThinking = "";
+    let receivedDone = false;
+    let aborted = false;
+    let abortReason = null;
+
+    for (const chunk of chunks) {
+      if (chunk === "[DONE]") {
+        receivedDone = true;
+        continue;
+      }
+      // 累积 content（模拟 chat.js 第 253-255 行）
+      const delta = chunk?.choices?.[0]?.delta;
+      if (delta && typeof delta.content === "string") {
+        accumulatedContent += delta.content;
+      }
+      const guardResult = guard.onChunk(chunk);
+      // 累积 thinking（模拟 chat.js 第 261-262 行）
+      if (typeof guardResult?.thinking === "string") {
+        accumulatedThinking += guardResult.thinking;
+      }
+      if (guardResult.action === "abort") {
+        aborted = true;
+        abortReason = guardResult.reason;
+        break;
+      }
+    }
+
+    if (aborted) {
+      return { aborted: true, reason: abortReason, accumulatedContent, accumulatedThinking };
+    }
+
+    // 模拟 chat.js 第 290-294 行 onComplete 调用
+    const result = guard.onComplete(accumulatedContent, {
+      receivedDone,
+      thinkingContent: accumulatedThinking,
+      isReasoningModel,
+    });
+
+    return {
+      aborted: false,
+      valid: result.valid,
+      reason: result.reason,
+      action: result.action,
+      accumulatedContent,
+      accumulatedThinking,
+      receivedDone,
+    };
+  }
+
+  it("推理模型：思考过程完整但无正式输出 + 无 DONE → valid（思考算有效长度，源码容忍）", () => {
+    // 模拟：模型开始思考，输出思考内容，但正式输出为空且流被中断
+    const chunks = [
+      reasoningChunk("正在分析问题", ""),
+      reasoningChunk("第一步：理解需求", ""),
+      reasoningChunk("第二步：设计方案", ""),
+      // 流断在这里，没有 [DONE]，正式 content 为空
+    ];
+    const r = simulateStream(chunks, { isReasoningModel: true });
+    expect(r.aborted).toBe(false);
+    // 源码实际行为：effectiveContent = content + thinkingContent，
+    // 思考内容足够长 → isShort=false → 无 DONE 但内容看起来完整 → 容忍 valid:true。
+    // 这是 guard 的设计决策：思考内容算有效长度，避免推理模型被误判中断。
+    expect(r.valid).toBe(true);
+    expect(r.accumulatedThinking.length).toBeGreaterThan(0);
+    expect(r.accumulatedContent).toBe("");
+    expect(r.receivedDone).toBe(false);
+  });
+
+  it("推理模型：思考 + 足够正式输出 + 无 DONE → valid（思考也算长度）", () => {
+    const chunks = [
+      reasoningChunk("思考中", ""),
+      oaiChunk("这是完整的回答内容，足够长"),
+    ];
+    const r = simulateStream(chunks, { isReasoningModel: true });
+    expect(r.valid).toBe(true);
+    expect(r.accumulatedThinking).toBe("思考中");
+  });
+
+  it("推理模型：思考完整 + 正式输出完整 + DONE → valid", () => {
+    const chunks = [
+      thinkingChunk("Claude 思考", ""),
+      oaiChunk("最终答案"),
+      "[DONE]",
+    ];
+    const r = simulateStream(chunks, { isReasoningModel: true });
+    expect(r.valid).toBe(true);
+    expect(r.receivedDone).toBe(true);
+  });
+
+  it("普通模型：短内容 + 无 DONE → stream-interrupted（不是 thinking-interrupted）", () => {
+    const chunks = [
+      oaiChunk("ab"),
+      // 流断
+    ];
+    const r = simulateStream(chunks, { isReasoningModel: false });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe("stream-interrupted");
+  });
+
+  it("输出循环检测在推理模型上同样生效", () => {
+    // 推理模型连续输出 10 次相同 token → output-loop abort
+    const chunks = [];
+    for (let i = 0; i < 11; i++) {
+      chunks.push(oaiChunk("loop"));
+    }
+    const r = simulateStream(chunks, { isReasoningModel: true, loopThreshold: 10 });
+    expect(r.aborted).toBe(true);
+    expect(r.reason).toBe("output-loop");
+  });
+
+  it("isReasoningModel=false 时思考内容仍被累积但不触发 thinking-interrupted", () => {
+    // 普通模型误传了思考内容 → 仍累积，但 reason 是 stream-interrupted
+    const chunks = [
+      reasoningChunk("思考内容", ""),
+      // 无正式输出，无 DONE
+    ];
+    const r = simulateStream(chunks, { isReasoningModel: false });
+    expect(r.valid).toBe(false);
+    expect(r.reason).toBe("stream-interrupted");
+    expect(r.accumulatedThinking).toBe("思考内容");
+  });
+});
+

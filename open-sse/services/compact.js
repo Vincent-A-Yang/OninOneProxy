@@ -1,3 +1,4 @@
+// @deprecated 2026-07-13: duplicate of combo.js (getComboModelsFromData / handleComboChat); no consumers in 9router-src. Kept for source history; safe to remove in a future cleanup.
 /**
  * Shared combo (model combo) handling with fallback support
  */

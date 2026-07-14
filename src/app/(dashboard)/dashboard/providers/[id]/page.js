@@ -1175,21 +1175,29 @@ export default function ProviderDetailPage() {
           if (notAdded.length === 0) return null;
           return (
             <div className="w-full mt-2">
-              <p className="text-xs text-text-muted mb-2">Suggested free models (≥200k context):</p>
+              <p className="text-xs text-text-muted mb-2">Available free models from provider:</p>
               <div className="flex flex-wrap gap-2">
-                {notAdded.map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={async () => {
-                      await handleAddCustomModel(m.id, "llm", providerStorageAlias);
-                    }}
-                    className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs text-text-muted hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-colors"
-                    title={`${m.name} · ${(m.contextLength / 1000).toFixed(0)}k ctx`}
-                  >
-                    <span className="material-symbols-outlined text-[13px]">add</span>
-                    {m.id.split("/").pop()}
-                  </button>
-                ))}
+                {notAdded.map((m) => {
+                  const ctxLabel = typeof m.contextLength === "number" && m.contextLength > 0
+                    ? `${(m.contextLength / 1000).toFixed(0)}k ctx`
+                    : null;
+                  return (
+                    <button
+                      key={m.id}
+                      onClick={async () => {
+                        await handleAddCustomModel(m.id, "llm", providerStorageAlias);
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-black/10 dark:border-white/10 text-xs text-text-muted hover:text-primary hover:border-primary/40 hover:bg-primary/5 transition-colors"
+                      title={ctxLabel ? `${m.name} · ${ctxLabel}` : m.name}
+                    >
+                      <span className="material-symbols-outlined text-[13px]">add</span>
+                      <span>{m.id.split("/").pop()}</span>
+                      {ctxLabel && (
+                        <span className="ml-1 font-mono text-[9px] text-text-muted/70">{ctxLabel}</span>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           );
@@ -1212,6 +1220,22 @@ export default function ProviderDetailPage() {
                 </button>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Empty state — no models available */}
+        {customModelRows.length === 0 &&
+          displayModels.length === 0 &&
+          suggestedModels.length === 0 && (
+          <div className="w-full text-center py-6 text-text-muted text-sm">
+            <span className="material-symbols-outlined text-[24px] mb-1 block">
+              {isFreeNoAuth ? "hourglass_empty" : "inbox"}
+            </span>
+            <p>
+              {isFreeNoAuth
+                ? "No models available. Free tier models will appear here once the provider's model list is fetched."
+                : "No models yet. Use \"Add Model\" above to add a custom model."}
+            </p>
           </div>
         )}
       </div>
@@ -1616,6 +1640,14 @@ export default function ProviderDetailPage() {
             <h2 className="text-lg font-semibold">
               {"Available Models"}
             </h2>
+            {(isFreeNoAuth || providerInfo?.hasFree) && (
+              <span
+                className="shrink-0 rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-medium text-emerald-500"
+                title="Free tier — no API key required"
+              >
+                Free Tier
+              </span>
+            )}
             {providerThinkingLevels && (
               <select
                 value={thinkingMode}

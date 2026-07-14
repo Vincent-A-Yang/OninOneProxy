@@ -63,6 +63,7 @@ const WINDOW_SECONDS_MAP = {
   minute: 60,
   hour: 3600,
   day: 86400,
+  five_hour: 18000, // 5 * 60 * 60 — 商汤 SenseNova 特有的 5 小时滑动窗口
 };
 
 /**
@@ -545,10 +546,30 @@ export function checkRateLimit(sourceId) {
     if (!windows || windows.length === 0) {
       return { allowed: true, violatedWindow: null, cooldownSeconds: 0 };
     }
+
+    // Task 13: Look up learned limits (from 429 errors) for this source.
+    // Learned limits override configured defaults when present.
+    let learned = null;
+    try {
+      const snap = getSourceWindowsSnapshot(sourceId);
+      if (snap && snap.provider && snap.model) {
+        learned = getLearnedLimits(snap.provider, snap.model);
+      }
+    } catch { /* fail-open */ }
+
     const now = Date.now();
     for (const w of windows) {
       const used = w.counter ? w.counter.sum(now) : 0;
-      if (used >= w.count) {
+      // Determine effective count: learned limit overrides configured.
+      let effectiveCount = w.count;
+      if (learned && w.unit === "request") {
+        if (w.window === "minute" && learned.rpm != null) {
+          effectiveCount = learned.rpm;
+        } else if (w.window === "second" && learned.rps != null) {
+          effectiveCount = learned.rps;
+        }
+      }
+      if (used >= effectiveCount) {
         // Cooldown = time until the oldest contributing bucket ages out
         // (≈ bucketSeconds) + safety margin.
         const cooldown =
@@ -598,23 +619,29 @@ function startOfUtcMonth(tsMs) {
  * configured windows; returns the first exhausted window's status, or
  * the first window's status when none are exhausted.
  *
+ * Dual-window support: weekly (7-day) and 5h (5-hour rolling) windows are
+ * tracked alongside the existing day/month/lifetime windows. When either
+ * the weekly or 5h window is exhausted, the returned `reason` field is
+ * 'weekly_exhausted' or '5h_exhausted' respectively, and `allowed` is false.
+ *
  * Backward compatibility: when getSourceQuota returns a single object
  * (legacy quotaPool), it is wrapped as a single-element array.
  *
  * Period reset rules:
  *   - day:      resets at UTC 00:00
  *   - month:    resets on 1st of month UTC 00:00
+ *   - weekly:   rolling 7-day window (resets every 604800s from periodStart)
+ *   - 5h:       rolling 5-hour window (resets every 18000s from periodStart)
  *   - lifetime: never resets
  *
  * @param {string} sourceId
- * @returns {{ exhausted: boolean, period: string|null, remaining: number, used: number, limit: number }}
+ * @returns {{ allowed: boolean, exhausted: boolean, period: string|null, remaining: number, used: number, limit: number, reason: string|null }}
  */
 export function checkQuotaLimit(sourceId) {
   try {
-    // Reset quota windows whose day/month period has elapsed BEFORE reading.
-    // This persists the reset to the source state so subsequent checks reflect
-    // actual consumption within the current period (fixes a bug where the
-    // period reset was only applied to a local copy).
+    // Reset quota windows whose day/month/weekly/5h period has elapsed BEFORE
+    // reading. This persists the reset to the source state so subsequent
+    // checks reflect actual consumption within the current period.
     resetExpiredQuotaPeriods(sourceId);
 
     const rawQuota = getSourceQuota(sourceId);
@@ -626,11 +653,13 @@ export function checkQuotaLimit(sourceId) {
         : [];
     if (quotas.length === 0) {
       return {
+        allowed: true,
         exhausted: false,
         period: null,
         remaining: Infinity,
         used: 0,
         limit: 0,
+        reason: null,
       };
     }
 
@@ -640,18 +669,31 @@ export function checkQuotaLimit(sourceId) {
       if (!quota || !quota.limit || quota.limit <= 0) continue;
       const used = quota.used || 0;
       const period = quota.period || "lifetime";
-
-      // Period reset is now handled by resetExpiredQuotaPeriods() above,
-      // which mutates the source state. The local `used` here is already
-      // the post-reset value from getSourceQuota().
-
       const remaining = Math.max(0, quota.limit - used);
+      const exhausted = used >= quota.limit;
+
+      // Dual-window reason mapping: weekly / 5h exhaustion gets a dedicated
+      // reason code so callers can distinguish which window triggered the
+      // cooldown. Other periods use a generic 'quota_exhausted:<period>' form.
+      let reason = null;
+      if (exhausted) {
+        if (period === "weekly") {
+          reason = "weekly_exhausted";
+        } else if (period === "5h") {
+          reason = "5h_exhausted";
+        } else {
+          reason = `quota_exhausted:${period}`;
+        }
+      }
+
       const result = {
-        exhausted: used >= quota.limit,
+        allowed: !exhausted,
+        exhausted,
         period,
         remaining,
         used,
         limit: quota.limit,
+        reason,
       };
       if (!firstResult) firstResult = result;
       if (result.exhausted) return result;
@@ -660,21 +702,103 @@ export function checkQuotaLimit(sourceId) {
     // No window exhausted — return first window's status (legacy compat).
     if (firstResult) return firstResult;
     return {
+      allowed: true,
       exhausted: false,
       period: null,
       remaining: Infinity,
       used: 0,
       limit: 0,
+      reason: null,
     };
   } catch (err) {
     log.warn(TAG, `checkQuotaLimit failed: ${err?.message || err}`);
     return {
+      allowed: true,
       exhausted: false,
       period: null,
       remaining: Infinity,
       used: 0,
       limit: 0,
+      reason: null,
     };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6.5 Dual-window remaining accessors (weekly / 5h)
+// ---------------------------------------------------------------------------
+
+/**
+ * Return the remaining quota for the weekly (7-day) window of a given
+ * provider+model pair.
+ *
+ * Iterates all sources registered under `provider`, finds the one whose
+ * model matches, and reads its `weekly` quota window. When no weekly
+ * window is configured, returns Infinity (treated as unlimited).
+ *
+ * Fail-open: any error returns Infinity (never blocks the caller).
+ *
+ * @param {string} provider - Provider name (case-insensitive).
+ * @param {string} model    - Upstream model name.
+ * @returns {number} Remaining tokens in the weekly window, or Infinity.
+ */
+export function getWeeklyRemaining(provider, model) {
+  try {
+    if (!provider || !model) return Infinity;
+    const sourceIds = getProviderSources(provider);
+    if (!sourceIds || sourceIds.length === 0) return Infinity;
+    for (const sourceId of sourceIds) {
+      const snap = getSourceWindowsSnapshot(sourceId);
+      if (!snap || snap.model !== model) continue;
+      if (Array.isArray(snap.quotaWindows)) {
+        for (const q of snap.quotaWindows) {
+          if (q && q.period === "weekly") {
+            return Math.max(0, q.remaining);
+          }
+        }
+      }
+    }
+    return Infinity;
+  } catch (err) {
+    log.warn(TAG, `getWeeklyRemaining failed: ${err?.message || err}`);
+    return Infinity;
+  }
+}
+
+/**
+ * Return the remaining quota for the 5h (5-hour rolling) window of a given
+ * provider+model pair.
+ *
+ * Iterates all sources registered under `provider`, finds the one whose
+ * model matches, and reads its `5h` quota window. When no 5h window is
+ * configured, returns Infinity (treated as unlimited).
+ *
+ * Fail-open: any error returns Infinity (never blocks the caller).
+ *
+ * @param {string} provider - Provider name (case-insensitive).
+ * @param {string} model    - Upstream model name.
+ * @returns {number} Remaining tokens in the 5h window, or Infinity.
+ */
+export function get5hRemaining(provider, model) {
+  try {
+    if (!provider || !model) return Infinity;
+    const sourceIds = getProviderSources(provider);
+    if (!sourceIds || sourceIds.length === 0) return Infinity;
+    for (const sourceId of sourceIds) {
+      const snap = getSourceWindowsSnapshot(sourceId);
+      if (!snap || snap.model !== model) continue;
+      if (Array.isArray(snap.quotaWindows)) {
+        for (const q of snap.quotaWindows) {
+          if (q && q.period === "5h") {
+            return Math.max(0, q.remaining);
+          }
+        }
+      }
+    }
+    return Infinity;
+  } catch (err) {
+    log.warn(TAG, `get5hRemaining failed: ${err?.message || err}`);
+    return Infinity;
   }
 }
 
@@ -774,5 +898,234 @@ export function getProviderStatus(provider) {
   } catch (err) {
     log.warn(TAG, `getProviderStatus failed: ${err?.message || err}`);
     return { provider, sources: [] };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 10. Learned Limits (Task 13: 从 429 错误体学习 Provider 限额)
+// ---------------------------------------------------------------------------
+
+/** TTL for learned limits: 24 hours in milliseconds. */
+const LEARNED_LIMITS_TTL_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * In-memory map of learned limits keyed by `${provider}:${model}`.
+ * @type {Map<string, {rpm: number|null, tpm: number|null, rps: number|null, learnedAt: number, expiresAt: number}>}
+ */
+const learnedLimitsMap = new Map();
+
+/** Build the lookup key for learned limits (lowercase provider). */
+function learnedLimitsKey(provider, model) {
+  return `${(provider || "").toLowerCase()}:${model || ""}`;
+}
+
+/** Parse a header/body value to a positive integer. Returns null on failure. */
+function parsePositiveInt(val) {
+  if (val == null) return null;
+  const n = Number(val);
+  if (!Number.isFinite(n) || n <= 0 || n > Number.MAX_SAFE_INTEGER) return null;
+  return Math.floor(n);
+}
+
+/** Get a header value case-insensitively (Headers instance or plain object). */
+function getHeaderCI(headers, name) {
+  if (!headers || !name) return null;
+  try {
+    if (typeof headers.get === "function") {
+      const v = headers.get(name);
+      if (v != null) return v;
+    }
+    if (typeof headers === "object") {
+      const lower = name.toLowerCase();
+      for (const k of Object.keys(headers)) {
+        if (k.toLowerCase() === lower) {
+          const v = headers[k];
+          if (v != null) return String(v);
+        }
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract numeric limits from a text string using common patterns. */
+function extractLimitsFromText(text) {
+  const result = { rpm: null, tpm: null, rps: null };
+  if (!text || typeof text !== "string") return result;
+  try {
+    const rpmMatch = text.match(/(\d+)\s*(?:requests?|req|r)\s*(?:\/|per)\s*(?:min(?:ute)?|m)\b/i);
+    if (rpmMatch) result.rpm = parsePositiveInt(rpmMatch[1]);
+    const tpmMatch = text.match(/(\d+)\s*(?:tokens?|tok|t)\s*(?:\/|per)\s*(?:min(?:ute)?|m)\b/i);
+    if (tpmMatch) result.tpm = parsePositiveInt(tpmMatch[1]);
+    const rpsMatch = text.match(/(\d+)\s*(?:requests?|req|r)\s*(?:\/|per)\s*(?:sec(?:ond)?|s)\b/i);
+    if (rpsMatch) result.rps = parsePositiveInt(rpsMatch[1]);
+    return result;
+  } catch {
+    return result;
+  }
+}
+
+/** Normalize error body (string/object/Error) into { parsed, text }. */
+function normalizeErrorBody(errorBody) {
+  try {
+    if (!errorBody) return { parsed: null, text: "" };
+    if (typeof errorBody === "string") {
+      const trimmed = errorBody.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try { return { parsed: JSON.parse(trimmed), text: errorBody }; }
+        catch { return { parsed: null, text: errorBody }; }
+      }
+      return { parsed: null, text: errorBody };
+    }
+    if (errorBody instanceof Error) {
+      return { parsed: null, text: errorBody.message || String(errorBody) };
+    }
+    if (typeof errorBody === "object") {
+      return { parsed: errorBody, text: JSON.stringify(errorBody) };
+    }
+    return { parsed: null, text: String(errorBody) };
+  } catch {
+    return { parsed: null, text: "" };
+  }
+}
+
+/**
+ * Detect provider format and extract limits from error body + headers.
+ *
+ * Supported formats:
+ *   - OpenAI: error.code === 'rate_limit_exceeded' or X-RateLimit-Limit-* headers
+ *   - Anthropic: error.type === 'rate_limit_error' + retry-after header
+ *   - Google Gemini: error.status === 'RESOURCE_EXHAUSTED'
+ *   - Azure OpenAI: X-RateLimit-Remaining-* headers (limit derived when possible)
+ *   - Generic: X-RateLimit-Limit / X-RateLimit-Remaining headers
+ */
+function extractLimits(provider, parsed, text, headers) {
+  const result = { rpm: null, tpm: null, rps: null };
+
+  // 1. Header-based extraction (cross-provider).
+  const limitReq = getHeaderCI(headers, "X-RateLimit-Limit-Requests")
+    || getHeaderCI(headers, "X-RateLimit-Limit");
+  if (limitReq) {
+    const n = parsePositiveInt(limitReq);
+    if (n) result.rpm = n;
+  }
+  const limitTok = getHeaderCI(headers, "X-RateLimit-Limit-Tokens");
+  if (limitTok) {
+    const n = parsePositiveInt(limitTok);
+    if (n) result.tpm = n;
+  }
+
+  // 2. Body-based extraction (provider-specific error markers).
+  if (parsed && typeof parsed === "object") {
+    const err = parsed.error || parsed;
+    const isRateLimit =
+      (err && (err.code === "rate_limit_exceeded" || err.code === "rate_limit")) ||
+      (err && err.type === "rate_limit_error") ||
+      (err && err.status === "RESOURCE_EXHAUSTED");
+    if (isRateLimit) {
+      const fromText = extractLimitsFromText(text);
+      if (fromText.rpm && !result.rpm) result.rpm = fromText.rpm;
+      if (fromText.tpm && !result.tpm) result.tpm = fromText.tpm;
+      if (fromText.rps && !result.rps) result.rps = fromText.rps;
+    }
+  }
+
+  // 3. Fallback: regex extraction from text (any provider).
+  if (!result.rpm && !result.tpm && !result.rps) {
+    const fromText = extractLimitsFromText(text);
+    if (fromText.rpm) result.rpm = fromText.rpm;
+    if (fromText.tpm) result.tpm = fromText.tpm;
+    if (fromText.rps) result.rps = fromText.rps;
+  }
+
+  return result;
+}
+
+/**
+ * Learn provider rate limits from a 429/402 error response.
+ *
+ * Parses the error body and headers to extract RPM/TPM/RPS limits and stores
+ * them in an in-memory map with a 24-hour TTL. Learned limits override
+ * configured defaults in checkRateLimit.
+ *
+ * Fail-open: any parsing error is silently swallowed.
+ *
+ * @param {string} provider - Provider name.
+ * @param {string} model - Model name.
+ * @param {string|Object|Error} errorBody - Error response body.
+ * @param {Object|Headers|null} headers - Response headers.
+ * @param {number} [statusCode] - HTTP status code (only 429/402 processed).
+ * @returns {{rpm: number|null, tpm: number|null, rps: number|null}|null}
+ */
+export function learnLimitFromError(provider, model, errorBody, headers, statusCode) {
+  try {
+    const code = Number(statusCode) || 0;
+    if (code !== 429 && code !== 402) return null;
+    if (!provider || !model) return null;
+
+    const { parsed, text } = normalizeErrorBody(errorBody);
+    const extracted = extractLimits(provider, parsed, text, headers);
+
+    if (!extracted.rpm && !extracted.tpm && !extracted.rps) return null;
+
+    const now = Date.now();
+    learnedLimitsMap.set(learnedLimitsKey(provider, model), {
+      rpm: extracted.rpm || null,
+      tpm: extracted.tpm || null,
+      rps: extracted.rps || null,
+      learnedAt: now,
+      expiresAt: now + LEARNED_LIMITS_TTL_MS,
+    });
+
+    log.debug(TAG, `learned limits for ${provider}/${model}: rpm=${extracted.rpm || "n/a"}, tpm=${extracted.tpm || "n/a"}, rps=${extracted.rps || "n/a"}`);
+    return extracted;
+  } catch (err) {
+    log.warn(TAG, `learnLimitFromError failed: ${err?.message || err}`);
+    return null;
+  }
+}
+
+/**
+ * Return learned limits for a provider+model, or null if not learned/expired.
+ * @param {string} provider
+ * @param {string} model
+ * @returns {{rpm: number|null, tpm: number|null, rps: number|null}|null}
+ */
+export function getLearnedLimits(provider, model) {
+  try {
+    if (!provider || !model) return null;
+    const entry = learnedLimitsMap.get(learnedLimitsKey(provider, model));
+    if (!entry) return null;
+    if (Date.now() >= entry.expiresAt) {
+      learnedLimitsMap.delete(learnedLimitsKey(provider, model));
+      return null;
+    }
+    return { rpm: entry.rpm, tpm: entry.tpm, rps: entry.rps };
+  } catch (err) {
+    log.warn(TAG, `getLearnedLimits failed: ${err?.message || err}`);
+    return null;
+  }
+}
+
+/**
+ * Clear learned limits for a provider+model, all models of a provider, or all.
+ * @param {string} [provider] - If omitted, clears all. If model omitted, clears all for provider.
+ * @param {string} [model]
+ */
+export function clearLearnedLimits(provider, model) {
+  try {
+    if (!provider) { learnedLimitsMap.clear(); return; }
+    if (!model) {
+      const prefix = `${provider.toLowerCase()}:`;
+      for (const k of learnedLimitsMap.keys()) {
+        if (k.startsWith(prefix)) learnedLimitsMap.delete(k);
+      }
+      return;
+    }
+    learnedLimitsMap.delete(learnedLimitsKey(provider, model));
+  } catch (err) {
+    log.warn(TAG, `clearLearnedLimits failed: ${err?.message || err}`);
   }
 }

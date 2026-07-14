@@ -1,5 +1,24 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`GOLDEN buildHeaders (default executor providers) > aihorde → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > alicode → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -566,6 +585,25 @@ exports[`GOLDEN buildHeaders (default executor providers) > hyperbolic → heade
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > kilo → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > kilocode → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
@@ -877,7 +915,45 @@ exports[`GOLDEN buildHeaders (default executor providers) > openrouter → heade
 }
 `;
 
+exports[`GOLDEN buildHeaders (default executor providers) > ovh → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
 exports[`GOLDEN buildHeaders (default executor providers) > perplexity → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "nonStream": {
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+  "oauth": {
+    "Accept": "text/event-stream",
+    "Authorization": "Bearer <TOK>",
+    "Content-Type": "application/json",
+  },
+}
+`;
+
+exports[`GOLDEN buildHeaders (default executor providers) > pollinations → headers (apiKey / oauth) 1`] = `
 {
   "apiKey": {
     "Accept": "text/event-stream",
@@ -931,6 +1007,14 @@ exports[`GOLDEN buildHeaders (default executor providers) > together → headers
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
   },
+}
+`;
+
+exports[`GOLDEN buildHeaders (default executor providers) > traecn → headers (apiKey / oauth) 1`] = `
+{
+  "apiKey": "THROW: Cannot read properties of undefined (reading 'header')",
+  "nonStream": "THROW: Cannot read properties of undefined (reading 'header')",
+  "oauth": "THROW: Cannot read properties of undefined (reading 'header')",
 }
 `;
 
@@ -1026,6 +1110,13 @@ exports[`GOLDEN buildHeaders (default executor providers) > xiaomi-mimo → head
     "Authorization": "Bearer <TOK>",
     "Content-Type": "application/json",
   },
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > aihorde → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://aihorde.net/api/v2",
+  "stream": "https://aihorde.net/api/v2",
 }
 `;
 
@@ -1190,6 +1281,13 @@ exports[`GOLDEN buildUrl (default executor providers) > hyperbolic → url (stre
 }
 `;
 
+exports[`GOLDEN buildUrl (default executor providers) > kilo → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://api.kilo.ai/api/gateway/v1/chat/completions",
+  "stream": "https://api.kilo.ai/api/gateway/v1/chat/completions",
+}
+`;
+
 exports[`GOLDEN buildUrl (default executor providers) > kilocode → url (stream + non-stream) 1`] = `
 {
   "nonStream": "https://api.kilo.ai/api/openrouter/chat/completions",
@@ -1288,10 +1386,24 @@ exports[`GOLDEN buildUrl (default executor providers) > openrouter → url (stre
 }
 `;
 
+exports[`GOLDEN buildUrl (default executor providers) > ovh → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+  "stream": "https://oai.endpoints.kepler.ai.cloud.ovh.net/v1",
+}
+`;
+
 exports[`GOLDEN buildUrl (default executor providers) > perplexity → url (stream + non-stream) 1`] = `
 {
   "nonStream": "https://api.perplexity.ai/chat/completions",
   "stream": "https://api.perplexity.ai/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > pollinations → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://text.pollinations.ai/openai/v1",
+  "stream": "https://text.pollinations.ai/openai/v1",
 }
 `;
 
@@ -1306,6 +1418,13 @@ exports[`GOLDEN buildUrl (default executor providers) > together → url (stream
 {
   "nonStream": "https://api.together.xyz/v1/chat/completions",
   "stream": "https://api.together.xyz/v1/chat/completions",
+}
+`;
+
+exports[`GOLDEN buildUrl (default executor providers) > traecn → url (stream + non-stream) 1`] = `
+{
+  "nonStream": "https://core-normal.trae.cn/api/remote/v1",
+  "stream": "https://core-normal.trae.cn/api/remote/v1",
 }
 `;
 

@@ -24,7 +24,7 @@ import { injectCaveman } from "../rtk/caveman.js";
 import { injectPonytail } from "../rtk/ponytail.js";
 import { compressMessages, formatRtkLog } from "../rtk/index.js";
 import { compressWithHeadroom, formatHeadroomLog, formatHeadroomSizeLog, isHeadroomPhantomSavings } from "../rtk/headroom.js";
-import { getCapabilitiesForModel } from "../providers/capabilities.js";
+import { getCapabilitiesForModel, getMaxOutputTokens } from "../providers/capabilities.js";
 import { stripUnsupportedModalities } from "../translator/concerns/modality.js";
 import { prefetchRemoteImages } from "../translator/concerns/prefetch.js";
 import { accumulate as accumulateTokenSaverStats } from "@/lib/tokenSaverStats";
@@ -36,7 +36,7 @@ import { accumulate as accumulateTokenSaverStats } from "@/lib/tokenSaverStats";
  * @param {object} options.credentials - Provider credentials
  * @param {string} options.sourceFormatOverride - Override detected source format (e.g. "openai-responses")
  */
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomAsyncMode, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomAsyncMode, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, sourceFormatOverride, providerThinking, isReasoningModel }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
 
@@ -302,6 +302,19 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     log?.debug?.("PROXY", `${provider.toUpperCase()} | ${model} | conn=${connectionName} | no_proxy=${proxyOptions.connectionNoProxy}`);
   }
 
+  // Task 15: 请求发送前，如果 translatedBody 中没有 max_tokens，使用 getMaxOutputTokens 填充。
+  // 不覆盖用户显式设置的值（chat.js 已处理 client body，此处是 safety net，
+  // 覆盖 combo / direct chatCore 调用路径）。Fail-open：任何错误不阻塞请求。
+  try {
+    if (typeof translatedBody.max_tokens !== "number") {
+      const maxOut = getMaxOutputTokens(provider, model);
+      translatedBody.max_tokens = maxOut;
+      log?.debug?.("TOKENS", `max_output_tokens=${maxOut} (chatCore fill, provider=${provider}, model=${model})`);
+    }
+  } catch (err) {
+    log?.warn?.("TOKENS", `chatCore getMaxOutputTokens failed (fail-open): ${err?.message || err}`);
+  }
+
   // Execute request
   let providerResponse, providerUrl, providerHeaders, finalBody;
   try {
@@ -376,7 +389,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     return createErrorResult(statusCode, errMsg, resetsAtMs);
   }
 
-  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess };
+  const sharedCtx = { provider, model, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, isReasoningModel };
   const appendLog = (extra) => appendRequestLog({ model, provider, connectionId, ...extra }).catch(() => { });
   const trackDone = () => trackPendingRequest(model, provider, connectionId, false);
 

@@ -119,7 +119,7 @@ const DEFAULT_SETTINGS = {
   // and max-file), not inside Node.js. This flag is exposed so the
   // Dashboard can show the configured state and so future code can read
   // it to decide whether to emit verbose per-request logs.
-  logRotationEnabled: true,
+  logRotationEnabled: true, // @deprecated 2026-07-13: defined in DEFAULT_SETTINGS but never read anywhere in 9router-src (log rotation is enforced at Docker json-file driver level). Kept for future Dashboard display; safe to remove if unused.
   // Stage 5.4: OAuth anti-ban runtime config.
   // D2: Protection-class switch — defaults ON. OAuth anti-ban (per-account
   // concurrency cap, refresh jitter, 429/403 monitor, header spoof) is a
@@ -145,6 +145,25 @@ const DEFAULT_SETTINGS = {
   //   }
   // Applied via resolveSpoofHeaders(provider) in executors.
   oauthSpoofOverrides: {},
+  // Task 12: StickySession scheduling mode. Controls source-selection
+  // behavior on rate-limit:
+  //   - "cache_first": wait up to 60s for the sticky source to recover
+  //     before switching (preserves Context Cache hit rate).
+  //   - "balance" (default): switch immediately but apply 30s dedupe so
+  //     the same source isn't re-tried too quickly.
+  //   - "performance_first": pure round-robin, ignores cache stickiness.
+  stickySessionMode: "balance",
+  // Task 10: Model sync configuration. Operators opt in via Dashboard
+  // (profile page → "模型同步" card). When modelSyncEnabled is true and
+  // modelSyncFrequency is not "manual", custom-server.js starts the
+  // modelSyncService.startSyncScheduler at boot. The scheduler pulls
+  // provider /models endpoints and updates model params in DB kv.
+  //   - "hourly": every 1h
+  //   - "12h":    every 12h
+  //   - "daily":  every 24h
+  //   - "manual": no auto schedule (only POST /api/models/sync triggers)
+  modelSyncEnabled: false,
+  modelSyncFrequency: "manual",
 };
 
 async function readRaw() {

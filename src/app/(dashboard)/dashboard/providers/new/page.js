@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Card, Button, Input, Select, Toggle } from "@/shared/components";
 import { AI_PROVIDERS, AUTH_METHODS } from "@/shared/constants/config";
+import { detectProviderFromKey } from "@/lib/key-prefix-detect";
 
 const providerOptions = Object.values(AI_PROVIDERS).map((p) => ({
   value: p.id,
@@ -32,6 +33,47 @@ export default function NewProviderPage() {
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: null }));
+    }
+  };
+
+  // Auto-detect provider from API key prefix. Recomputes on every apiKey
+  // change. Returns null when no known prefix matches. The user can still
+  // manually override by picking from the Select — detection only sets
+  // the default when the user hasn't chosen one yet, and surfaces a hint
+  // banner so they can confirm or override.
+  const detectedProvider = useMemo(() => {
+    if (formData.authMethod !== "api_key" || !formData.apiKey) return null;
+    return detectProviderFromKey(formData.apiKey);
+  }, [formData.authMethod, formData.apiKey]);
+
+  const detectedProviderName = detectedProvider
+    ? AI_PROVIDERS[detectedProvider]?.name || detectedProvider
+    : null;
+
+  // Show the "auto-select" hint only when:
+  //   1. We detected a provider from the key prefix, AND
+  //   2. The user hasn't manually picked a provider yet (or picked one
+  //      that doesn't match — in which case we show a mismatch warning).
+  const showDetectionHint =
+    formData.authMethod === "api_key" &&
+    formData.apiKey &&
+    detectedProvider;
+
+  const isMismatch =
+    showDetectionHint &&
+    formData.provider &&
+    formData.provider !== detectedProvider;
+
+  const handleApiKeyChange = (value) => {
+    handleChange("apiKey", value);
+    // Auto-select the detected provider only when the user hasn't picked
+    // one yet. This keeps the UX non-intrusive: if they already chose a
+    // provider, we respect that and just show a mismatch warning.
+    if (!formData.provider) {
+      const detected = detectProviderFromKey(value);
+      if (detected && AI_PROVIDERS[detected]) {
+        handleChange("provider", detected);
+      }
     }
   };
 
@@ -153,16 +195,54 @@ export default function NewProviderPage() {
 
           {/* API Key Input */}
           {formData.authMethod === "api_key" && (
-            <Input
-              label="API Key"
-              type="password"
-              placeholder="Enter your API key"
-              value={formData.apiKey}
-              onChange={(e) => handleChange("apiKey", e.target.value)}
-              error={errors.apiKey}
-              hint="Your API key will be encrypted and stored securely."
-              required
-            />
+            <>
+              <Input
+                label="API Key"
+                type="password"
+                placeholder="Paste your API key — provider will be auto-detected"
+                value={formData.apiKey}
+                onChange={(e) => handleApiKeyChange(e.target.value)}
+                error={errors.apiKey}
+                hint="Your API key will be encrypted and stored securely. Provider is auto-detected from the key prefix."
+                required
+              />
+              {/* Auto-detection visual feedback */}
+              {showDetectionHint && (
+                <div
+                  className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${
+                    isMismatch
+                      ? "border-yellow-300/50 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
+                      : "border-emerald-300/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                  }`}
+                >
+                  <span className="material-symbols-outlined text-[18px]">
+                    {isMismatch ? "warning" : "auto_awesome"}
+                  </span>
+                  <span>
+                    {isMismatch ? (
+                      <>
+                        已识别为 <strong>{detectedProviderName}</strong>，但当前选择的是
+                        <strong> {AI_PROVIDERS[formData.provider]?.name || formData.provider}</strong>。
+                        请确认 Key 与所选 provider 是否匹配。
+                      </>
+                    ) : (
+                      <>
+                        已从 Key 前缀自动识别为 <strong>{detectedProviderName}</strong>。
+                        如不正确可手动修改。
+                      </>
+                    )}
+                  </span>
+                </div>
+              )}
+              {formData.apiKey && !detectedProvider && (
+                <div className="flex items-center gap-2 rounded-lg border border-border bg-bg px-3 py-2 text-sm text-text-muted">
+                  <span className="material-symbols-outlined text-[18px]">info</span>
+                  <span>
+                    未识别到此 Key 的前缀，请手动选择 provider。
+                  </span>
+                </div>
+              )}
+            </>
           )}
 
           {/* OAuth2 Button */}

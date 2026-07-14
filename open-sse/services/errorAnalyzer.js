@@ -10,7 +10,7 @@
  *   {
  *     category:        "rate_limit" | "quota_exhausted" | "invalid_key" |
  *                      "model_not_found" | "overloaded" | "timeout" |
- *                      "server_error" | "unknown",
+ *                      "server_error" | "oauth_invalid_client" | "unknown",
  *     strategy:        "cool_down_seconds" | "switch_key" | "switch_provider" |
  *                      "switch_model" | "retry" | "fail",
  *     coolDownSeconds: number,   // suggested cooldown; 0 when N/A
@@ -24,6 +24,48 @@
  *   - Provider-aware: pattern sets for NVIDIA / OpenAI / Anthropic / Gemini / Azure.
  *   - Honors `Retry-After` header (seconds or HTTP-date).
  */
+
+import { secondsUntilNextUtcMidnight } from "../config/errorConfig.js";
+
+// ---------------------------------------------------------------------------
+// F6 providerLimits integration (429 cooldown derivation)
+// ---------------------------------------------------------------------------
+/**
+ * Safety margin (seconds) added to providerLimits-derived 429 cooldowns.
+ *
+ * Larger than providerLimits' own SAFETY_MARGIN_SECONDS (5s) because
+ * errorAnalyzer cooldowns gate upstream recovery after an actual 429 has
+ * already occurred — extra margin avoids premature retries that would just
+ * get 429'd again.
+ */
+const SAFETY_MARGIN_SECONDS = 60;
+
+/**
+ * Local copy of window→seconds mapping (mirrors providerLimits.WINDOW_SECONDS_MAP).
+ * Kept in sync to avoid importing a non-exported constant; includes five_hour
+ * (商汤 SenseNova 5-hour sliding window, 18000s).
+ */
+const WINDOW_SECONDS_LOCAL = {
+  second: 1,
+  minute: 60,
+  hour: 3600,
+  day: 86400,
+  five_hour: 18000,
+};
+
+/**
+ * Cached providerLimits module reference (loaded via dynamic import to avoid
+ * circular dependency with quotaPool.js). null until the import resolves.
+ * @type {Object|null}
+ */
+let providerLimitsModule = null;
+
+// Fire-and-forget dynamic import: resolves asynchronously on module load.
+// If it fails (e.g. circular dep issue at init time), providerLimitsModule
+// stays null and 429 cooldown derivation falls back to the default 60s.
+import("./providerLimits.js")
+  .then((mod) => { providerLimitsModule = mod; })
+  .catch(() => { /* fail-open: keep null, use default cooldown */ });
 
 // ---------------------------------------------------------------------------
 // Provider hint normalization
@@ -177,7 +219,19 @@ const STATUS_FALLBACK = {
     switchTarget: "key",
     reason: "Generic: 401 unauthorized",
   },
+  402: {
+    // 402 Payment Required — billing issue. Treated as quota_exhausted so
+    // the pool fails over to the next key (the current key can't charge).
+    category: "quota_exhausted",
+    strategy: "switch_key",
+    coolDownSeconds: 0,
+    switchTarget: "key",
+    reason: "Generic: 402 payment required",
+  },
   403: {
+    // 403 — generic form stays invalid_key (switch key). Model-forbidden
+    // 403s are caught earlier by the model-forbidden text check in
+    // analyzeError() so they never reach this fallback.
     category: "invalid_key",
     strategy: "switch_key",
     coolDownSeconds: 0,
@@ -304,6 +358,51 @@ function generic4xx(status) {
   };
 }
 
+/**
+ * Derive a 429 cooldown from the F6 providerLimits configuration.
+ *
+ * Reads the provider's default rate windows (via the synchronous
+ * getDefaultLimits) and picks the strictest (largest bucketSeconds) window
+ * to derive a cooldown: maxBucketSeconds + SAFETY_MARGIN_SECONDS.
+ *
+ * Why getDefaultLimits (sync) and not getEffectiveLimits (async)?
+ *   analyzeError is a synchronous pure function. getEffectiveLimits is
+ *   async (reads from DB), so it cannot be awaited here without breaking
+ *   the sync contract that all callers rely on. getDefaultLimits returns
+ *   the built-in default rate windows synchronously, which is sufficient
+ *   for deriving a safe cooldown floor. When the user has customised
+ *   limits in the DB, getEffectiveLimits would return those — but for
+ *   cooldown purposes the default windows are a safe lower bound.
+ *
+ * Fail-open: any error or missing data returns 0, so the caller falls back
+ * to the STATUS_FALLBACK[429] default of 60s.
+ *
+ * @param {string} provider - Normalized provider name (lowercase).
+ * @returns {number} Cooldown seconds (0 when unavailable → use default).
+ */
+function get429CooldownFromProviderLimits(provider) {
+  try {
+    if (!provider || !providerLimitsModule) return 0;
+    // getDefaultLimits is synchronous and returns built-in defaults.
+    // (getEffectiveLimits is the async version that also reads DB config,
+    //  but cannot be awaited here — see function docstring above.)
+    const limits = providerLimitsModule.getDefaultLimits(provider);
+    if (!limits || !Array.isArray(limits.rateWindows) || limits.rateWindows.length === 0) {
+      return 0;
+    }
+    let maxBucketSeconds = 0;
+    for (const rw of limits.rateWindows) {
+      if (!rw || !rw.window) continue;
+      const sec = WINDOW_SECONDS_LOCAL[rw.window] || 0;
+      if (sec > maxBucketSeconds) maxBucketSeconds = sec;
+    }
+    if (maxBucketSeconds <= 0) return 0;
+    return maxBucketSeconds + SAFETY_MARGIN_SECONDS;
+  } catch {
+    return 0;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -354,6 +453,66 @@ export function analyzeError(statusCode, bodyText, headers = {}, providerHint = 
       }
     }
 
+    // 1b. Daily-quota dual-marker detection (provider-agnostic).
+    //     Requires BOTH a daily marker AND a quota qualifier to avoid false
+    //     positives on messages like "daily reset" or generic per-minute
+    //     "quota exceeded". Checked before generic patterns so the daily
+    //     long-cooldown strategy wins over the generic rate-limit pattern.
+    //
+    //     Daily quota errors cool down until the next UTC 00:00:00 (when
+    //     providers typically reset daily allowances). If the upstream
+    //     returned a Retry-After header, honor that instead — it may carry
+    //     the exact reset time.
+    const DAILY_MARKERS = ["daily"];
+    const DAILY_QUALIFIERS = ["allocation", "quota", "limit", "exhaust", "used up"];
+    if (DAILY_MARKERS.some(m => lower.includes(m)) &&
+        DAILY_QUALIFIERS.some(q => lower.includes(q))) {
+      const retryAfter = pickRetryAfter(headers);
+      const coolDownSeconds = retryAfter > 0
+        ? retryAfter
+        : secondsUntilNextUtcMidnight();
+      return finalize({
+        category: "quota_exhausted",
+        strategy: "cool_down_seconds",
+        coolDownSeconds: 0,
+        switchTarget: "key",
+        reason: "Daily quota exhausted (dual-marker match, cool until UTC midnight)",
+      }, coolDownSeconds);
+    }
+
+    // 1c. Model-forbidden 403 detection (distinguish from invalid_key 403).
+    //     A 403 whose body mentions model/permission/forbidden is treated as
+    //     model_not_found (switch model) rather than invalid_key (switch key).
+    if (status === 403) {
+      const MODEL_FORBIDDEN_MARKERS = ["model", "not allowed", "permission"];
+      if (MODEL_FORBIDDEN_MARKERS.some(k => lower.includes(k))) {
+        return finalize({
+          category: "model_not_found",
+          strategy: "switch_model",
+          coolDownSeconds: 0,
+          switchTarget: "model",
+          reason: "Generic: 403 model forbidden",
+        }, 0);
+      }
+    }
+
+    // 1d. OAuth invalid_client detection (distinguish from generic 401 invalid_key).
+    //     A response body mentioning "invalid_client" or "invalid client" is
+    //     treated as oauth_invalid_client (OAuth credentials issue) rather
+    //     than invalid_key (API key issue). This catches Antigravity / Google
+    //     OAuth flows where client_id / client_secret are placeholders
+    //     (YOUR_*) or have been revoked/expired. Checked before STATUS_FALLBACK
+    //     so 401 + invalid_client text → oauth_invalid_client, not invalid_key.
+    if (lower.includes("invalid_client") || lower.includes("invalid client")) {
+      return finalize({
+        category: "oauth_invalid_client",
+        strategy: "switch_key",
+        coolDownSeconds: 0,
+        switchTarget: "key",
+        reason: "OAuth: invalid_client (401)",
+      }, 0);
+    }
+
     // 2. Generic body-text pattern match (provider-agnostic).
     //    Catches common rate-limit / overload phrasing for providers without
     //    a dedicated PROVIDER_PATTERNS entry (tencent, sensenova, minimax, etc.).
@@ -370,7 +529,14 @@ export function analyzeError(statusCode, bodyText, headers = {}, providerHint = 
     const fallback = fallbackByStatus(status);
     if (fallback) {
       const retryAfter = pickRetryAfter(headers);
-      const coolDownSeconds = retryAfter > 0 ? retryAfter : fallback.coolDownSeconds || 0;
+      let coolDownSeconds = retryAfter > 0 ? retryAfter : fallback.coolDownSeconds || 0;
+      // 429: try to derive a more accurate cooldown from providerLimits
+      // config (e.g. five_hour window → 18000s + SAFETY_MARGIN_SECONDS).
+      // Only when no Retry-After header was present (Retry-After always wins).
+      if (status === 429 && retryAfter === 0) {
+        const limitsCooldown = get429CooldownFromProviderLimits(provider);
+        if (limitsCooldown > 0) coolDownSeconds = limitsCooldown;
+      }
       return finalize(fallback, coolDownSeconds);
     }
 
@@ -450,6 +616,21 @@ function finalize(pattern, coolDownSeconds) {
  */
 export function isProviderLimitsCooldown(reason) {
   return typeof reason === "string" && reason.startsWith("provider-limits-");
+}
+
+/**
+ * Check whether an HTTP status code is a transient 5xx server error.
+ *
+ * Used by quotaPool.recordFailure to decide whether to bump the
+ * failureCount (429-style rate limits) or skip it (5xx — short cooldown +
+ * failover only, so a flaky upstream can't poison the backoff staircase).
+ *
+ * @param {number} status - HTTP status code.
+ * @returns {boolean} true when status is in [500, 599].
+ */
+export function is5xxTransientError(status) {
+  const s = Number(status) || 0;
+  return s >= 500 && s < 600;
 }
 
 // Exported for unit tests and tooling.

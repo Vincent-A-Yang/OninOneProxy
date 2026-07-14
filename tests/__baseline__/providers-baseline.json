@@ -24,14 +24,14 @@
   "gemini": {
     "baseUrl": "https://generativelanguage.googleapis.com/v1beta/models",
     "format": "gemini",
-    "clientId": "YOUR_GEMINI_CLI_CLIENT_ID.apps.googleusercontent.com",
-    "clientSecret": "YOUR_GEMINI_CLI_CLIENT_SECRET"
+    "clientId": "PLACEHOLDER_CLIENT_ID",
+    "clientSecret": "PLACEHOLDER_CLIENT_SECRET"
   },
   "gemini-cli": {
     "baseUrl": "https://cloudcode-pa.googleapis.com/v1internal",
     "format": "gemini-cli",
-    "clientId": "YOUR_GEMINI_CLI_CLIENT_ID.apps.googleusercontent.com",
-    "clientSecret": "YOUR_GEMINI_CLI_CLIENT_SECRET"
+    "clientId": "PLACEHOLDER_CLIENT_ID",
+    "clientSecret": "PLACEHOLDER_CLIENT_SECRET"
   },
   "codex": {
     "baseUrl": "https://chatgpt.com/backend-api/codex/responses",
@@ -77,8 +77,8 @@
     "headers": {
       "User-Agent": "antigravity/1.107.0 darwin/arm64"
     },
-    "clientId": "YOUR_ANTIGRAVITY_CLIENT_ID.apps.googleusercontent.com",
-    "clientSecret": "YOUR_ANTIGRAVITY_CLIENT_SECRET"
+    "clientId": "PLACEHOLDER_CLIENT_ID",
+    "clientSecret": "PLACEHOLDER_CLIENT_SECRET"
   },
   "openrouter": {
     "baseUrl": "https://openrouter.ai/api/v1/chat/completions",
