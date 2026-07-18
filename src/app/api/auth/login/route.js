@@ -36,7 +36,9 @@ export async function POST(request) {
       return NextResponse.json({ error: "Dashboard access via tunnel is disabled" }, { status: 403 });
     }
 
-    // Default password is '123456' if not set
+    // No stored password AND no environmental default → login via password is
+    // disabled. The operator must set INITIAL_PASSWORD or DASHBOARD_PASSWORD, or
+    // configure a password via the Dashboard settings panel first.
     const storedHash = settings.password;
 
     if (settings.authMode === "oidc" && isOidcConfigured(settings)) {
@@ -47,9 +49,16 @@ export async function POST(request) {
     if (storedHash) {
       isValid = await bcrypt.compare(password, storedHash);
     } else {
-      // Use env var or default
-      const initialPassword = process.env.INITIAL_PASSWORD || "123456";
-      isValid = password === initialPassword;
+      // No fallback to hardcoded default. Require operator-configured password.
+      const initialPassword = process.env.INITIAL_PASSWORD || process.env.DASHBOARD_PASSWORD;
+      if (initialPassword) {
+        isValid = password === initialPassword;
+      } else {
+        return NextResponse.json(
+          { error: "Password login is disabled. Set INITIAL_PASSWORD or a dashboard password first." },
+          { status: 403 }
+        );
+      }
     }
 
     if (isValid) {
@@ -59,8 +68,8 @@ export async function POST(request) {
 
       // Default password still in use on a remote client → force a password
       // change before the dashboard is exposed remotely (keeps local UX intact).
-      const mustChangePassword =
-        !storedHash && !process.env.INITIAL_PASSWORD && !isLocalRequest(request);
+      const hasEnvPassword = !!(process.env.INITIAL_PASSWORD || process.env.DASHBOARD_PASSWORD);
+      const mustChangePassword = !storedHash && !hasEnvPassword && !isLocalRequest(request);
 
       return NextResponse.json({ success: true, mustChangePassword }, { headers: NO_STORE_HEADERS });
     }

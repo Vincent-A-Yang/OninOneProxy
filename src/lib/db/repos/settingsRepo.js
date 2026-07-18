@@ -35,7 +35,7 @@ const DEFAULT_SETTINGS = {
   mitmRouterBaseUrl: DEFAULT_MITM_ROUTER_BASE,
   dnsToolEnabled: {},
   rtkEnabled: true,
-  headroomEnabled: false,
+  headroomEnabled: true,
   headroomUrl: DEFAULT_HEADROOM_URL,
   headroomCompressUserMessages: false,
   // Stage 2.4: Headroom async mode. When true, compressWithHeadroom is
@@ -44,9 +44,9 @@ const DEFAULT_SETTINGS = {
   // for subsequent identical prompts. Defaults off to preserve existing
   // synchronous compression behavior.
   headroomAsyncMode: false,
-  cavemanEnabled: false,
+  cavemanEnabled: true,
   cavemanLevel: "full",
-  ponytailEnabled: false,
+  ponytailEnabled: true,
   ponytailLevel: "full",
   // F1: Fusion primary/backup failover. When true, handleFusionChat will automatically
   // activate the backup model if a panel slot's primary fails. Defaults to true so

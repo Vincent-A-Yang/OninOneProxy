@@ -234,16 +234,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     accumulateTokenSaverStats({
       rtk: rtkStats
         ? {
-            tokensSaved: rtkStats.tokensSaved ?? rtkStats.saved ?? 0,
-            beforeTokens: rtkStats.beforeTokens ?? rtkStats.before ?? 0,
-            afterTokens: rtkStats.afterTokens ?? rtkStats.after ?? 0,
+            tokensSaved: Math.max(0, (rtkStats.bytesBefore || 0) - (rtkStats.bytesAfter || 0)),
+            beforeTokens: rtkStats.bytesBefore || 0,
+            afterTokens: rtkStats.bytesAfter || 0,
           }
         : undefined,
       headroom: headroomStats
         ? {
-            tokensSaved: headroomStats.tokensSaved ?? headroomStats.saved ?? 0,
-            beforeTokens: headroomStats.beforeTokens ?? headroomStats.before ?? 0,
-            afterTokens: headroomStats.afterTokens ?? headroomStats.after ?? 0,
+            tokensSaved: Math.max(0, (headroomStats.bytesBefore || 0) - (headroomStats.bytesAfter || 0)),
+            beforeTokens: headroomStats.bytesBefore || 0,
+            afterTokens: headroomStats.bytesAfter || 0,
           }
         : undefined,
       caveman: { enabled: !!(cavemanEnabled && cavemanLevel), level: cavemanLevel || null },
