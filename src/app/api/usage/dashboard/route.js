@@ -128,9 +128,17 @@ export async function GET(request) {
     }
 
     // ─── byProvider ──────────────────────────────────────────────────────
+    // Resolve provider node IDs to human-readable names
+    let nodeNameMap = {};
+    try {
+      const { getProviderNodes } = await import("@/lib/db/repos/nodesRepo.js");
+      const nodes = await getProviderNodes();
+      for (const n of nodes) { if (n.id && n.name) nodeNameMap[n.id] = n.name; }
+    } catch {}
     const providerMap = {};
     for (const r of rows) {
-      const name = r.provider || "unknown";
+      const rawName = r.provider || "unknown";
+      const name = nodeNameMap[rawName] || rawName;
       if (!providerMap[name]) providerMap[name] = { name, tokens: 0, requests: 0 };
       providerMap[name].tokens += (r.promptTokens || 0) + (r.completionTokens || 0);
       providerMap[name].requests += 1;

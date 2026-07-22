@@ -249,6 +249,13 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
 
   // Token saver stats accumulator (fail-open, never blocks request flow)
   try {
+    // Estimate caveman/ponytail savings: they reduce OUTPUT verbosity.
+    // Heuristic: ~20% of estimated input tokens as output savings (conservative).
+    const msgChars = (translatedBody.messages || []).reduce((s, m) => s + (typeof m.content === "string" ? m.content.length : JSON.stringify(m.content || "").length), 0);
+    const estInputTokens = Math.round(msgChars / 4);
+    const cavemanEstimate = (cavemanEnabled && cavemanLevel) ? Math.round(estInputTokens * 0.2) : 0;
+    const ponytailEstimate = (ponytailEnabled && ponytailLevel) ? Math.round(estInputTokens * 0.15) : 0;
+
     accumulateTokenSaverStats({
       rtk: rtkStats
         ? {
@@ -264,8 +271,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
             afterTokens: headroomStats.bytesAfter || 0,
           }
         : undefined,
-      caveman: { enabled: !!(cavemanEnabled && cavemanLevel), level: cavemanLevel || null },
-      ponytail: { enabled: !!(ponytailEnabled && ponytailLevel), level: ponytailLevel || null },
+      caveman: { enabled: !!(cavemanEnabled && cavemanLevel), level: cavemanLevel || null, tokensSaved: cavemanEstimate },
+      ponytail: { enabled: !!(ponytailEnabled && ponytailLevel), level: ponytailLevel || null, tokensSaved: ponytailEstimate },
     });
   } catch {
     // fail-open: stats tracking must never block the request

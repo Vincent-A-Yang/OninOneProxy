@@ -30,7 +30,7 @@ export default function ProviderLimitsPage() {
   const [providerNames, setProviderNames] = useState({});
   const pollRef = useRef(null);
 
-  // Build connectionId/providerType → display name map
+  // Build connectionId/providerNodeId → display name map
   useEffect(() => {
     fetch("/api/providers", { headers: { "Cache-Control": "no-store" } })
       .then(r => r.json())
@@ -38,7 +38,9 @@ export default function ProviderLimitsPage() {
         const map = {};
         for (const c of (d.connections || d || [])) {
           if (c.id) map[c.id] = c.name || c.id;
-          if (c.providerType) map[c.providerType] = c.name || c.providerType;
+          // c.provider is the provider node ID (e.g. "openai-compatible-chat-xxx")
+          // or standard provider type (e.g. "nvidia") — map both to display name
+          if (c.provider) map[c.provider] = c.name || c.provider;
         }
         setProviderNames(map);
       })
@@ -372,7 +374,7 @@ export default function ProviderLimitsPage() {
 function ConfigRow({ cfg, onToggle, onEdit, onDelete, providerNames = {} }) {
   const isEnabled = cfg.enabled === 1 || cfg.enabled === true;
   const scopeVariant = cfg.scope === "provider" ? "primary" : cfg.scope === "model" ? "success" : "info";
-  const displayName = providerNames[cfg.provider] || cfg.provider;
+  const displayName = providerNames[cfg.provider] || cfg.providerName || cfg.provider;
   return (
     <>
       <tr className="border-b border-border/50 hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">

@@ -162,12 +162,19 @@ export async function GET() {
 
     // Build connectionId → providerType map for liveStatus resolution
     let connToProvider = {};
+    let nodeNameMap = {};
     try {
       const { getProviderConnections } = await import("@/lib/db/repos/connectionsRepo.js");
       const conns = await getProviderConnections();
       for (const c of conns) {
         if (c.id && c.provider) connToProvider[c.id] = c.provider;
       }
+    } catch {}
+    // Resolve provider node IDs to human-readable names
+    try {
+      const { getProviderNodes } = await import("@/lib/db/repos/nodesRepo.js");
+      const nodes = await getProviderNodes();
+      for (const n of nodes) { if (n.id && n.name) nodeNameMap[n.id] = n.name; }
     } catch {}
 
     const merged = [];
@@ -181,7 +188,7 @@ export async function GET() {
       } catch {
         liveStatus = null;
       }
-      merged.push({ ...cfg, liveStatus });
+      merged.push({ ...cfg, providerName: nodeNameMap[cfg.provider] || cfg.provider, liveStatus });
     }
     return NextResponse.json({
       configs: merged,

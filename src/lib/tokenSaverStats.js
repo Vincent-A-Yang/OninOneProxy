@@ -111,7 +111,12 @@ export function accumulate(stats = {}) {
       moduleState.caveman.applied += 1;
       today.caveman.requests += 1;
       total.caveman.requests += 1;
-      snapshot.modules.caveman = { level: stats.caveman.level };
+      const cavSaved = Number(stats.caveman.tokensSaved) || 0;
+      if (cavSaved > 0) {
+        today.caveman.tokensSaved += cavSaved;
+        total.caveman.tokensSaved += cavSaved;
+      }
+      snapshot.modules.caveman = { level: stats.caveman.level, tokensSaved: cavSaved };
     } else {
       moduleState.caveman.enabled = false;
       moduleState.caveman.level = null;
@@ -123,7 +128,12 @@ export function accumulate(stats = {}) {
       moduleState.ponytail.applied += 1;
       today.ponytail.requests += 1;
       total.ponytail.requests += 1;
-      snapshot.modules.ponytail = { level: stats.ponytail.level };
+      const ptSaved = Number(stats.ponytail.tokensSaved) || 0;
+      if (ptSaved > 0) {
+        today.ponytail.tokensSaved += ptSaved;
+        total.ponytail.tokensSaved += ptSaved;
+      }
+      snapshot.modules.ponytail = { level: stats.ponytail.level, tokensSaved: ptSaved };
     } else {
       moduleState.ponytail.enabled = false;
       moduleState.ponytail.level = null;

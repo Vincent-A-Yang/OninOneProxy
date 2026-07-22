@@ -24,19 +24,26 @@ export async function GET(request) {
       [...params, limit]
     );
 
-    // Get connection names
+    // Get connection names + provider node names
     let connMap = {};
     try {
       const { getProviderConnections } = await import("@/lib/db/repos/connectionsRepo.js");
       const conns = await getProviderConnections();
       for (const c of conns) connMap[c.id] = resolveProviderName(c.id, c.name || c.email, c.provider);
     } catch {}
+    // Also resolve provider node IDs (e.g. "openai-compatible-chat-xxx") to their configured names
+    let nodeNameMap = {};
+    try {
+      const { getProviderNodes } = await import("@/lib/db/repos/nodesRepo.js");
+      const nodes = await getProviderNodes();
+      for (const n of nodes) { if (n.id && n.name) nodeNameMap[n.id] = n.name; }
+    } catch {}
 
     const logs = rows.map((r) => {
       const tk = parseJson(r.tokens, {}) || {};
       return {
         timestamp: r.timestamp,
-        provider: r.provider || "-",
+        provider: nodeNameMap[r.provider] || r.provider || "-",
         model: r.model || "-",
         account: connMap[r.connectionId] || (r.connectionId ? r.connectionId.slice(0, 8) : "-"),
         endpoint: r.endpoint || "-",
