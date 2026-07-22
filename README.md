@@ -62,34 +62,21 @@ Connect Claude Code, Cursor, Codex, Cline — and any OpenAI-compatible tool —
 
 ---
 
-## Quick Start — 30 Seconds
+## Feature Comparison
 
-```bash
-git clone https://github.com/Vincent-A-Yang/OninOneProxy.git && cd OninOneProxy
-cp .env.example .env        # set INITIAL_PASSWORD to your password
-docker compose up -d
-# Dashboard: http://localhost:20130/dashboard
-# API Endpoint: http://localhost:20130/v1
-```
-
-### Deploy with Your AI Agent
-
-Copy the following prompt and paste it to your AI coding agent (Claude Code, Cursor, Codex, etc.):
-
-> Deploy OninOneProxy on my machine:
->
-> 1. `git clone https://github.com/Vincent-A-Yang/OninOneProxy.git && cd OninOneProxy`
-> 2. `cp .env.example .env`
-> 3. Edit `.env`: set `INITIAL_PASSWORD` to a strong password (this is your dashboard login)
-> 4. `docker compose up -d`
-> 5. Wait for "Ready" in logs: `docker logs -f oninoneproxy`
-> 6. Open http://localhost:20130/dashboard and log in with your password
-> 7. In the dashboard: add your first Provider (e.g. OpenRouter with your API key)
-> 8. Copy the API key from "Endpoint & Key" page
-> 9. Configure your AI tool: endpoint=`http://localhost:20130/v1`, key=the key you copied
-> 10. Verify: `curl http://localhost:20130/v1/models -H "Authorization: Bearer YOUR_KEY"`
->
-> The gateway is now running. All requests to port 20130 are routed through your configured providers with automatic failover.
+| Feature | OninOneProxy | One API | New API | LiteLLM |
+|---------|:---:|:---:|:---:|:---:|
+| Zero-downtime failover | ✅ | ❌ | ❌ | Partial |
+| Multi-key rate stacking | ✅ | ❌ | ❌ | ❌ |
+| MOA Fusion (multi-model) | ✅ | ❌ | ❌ | ❌ |
+| Format translation (3 protocols) | ✅ | ❌ | ❌ | ✅ |
+| Semantic cache (HNSW) | ✅ | ❌ | ❌ | ❌ |
+| Token saving pipeline (4 layers) | ✅ | ❌ | ❌ | ❌ |
+| Smart router (learned weights) | ✅ | ❌ | ❌ | ❌ |
+| OAuth credential management | ✅ | ❌ | ❌ | ❌ |
+| Docker one-liner deploy | ✅ | ✅ | ✅ | ✅ |
+| Dashboard Web UI | ✅ | ✅ | ✅ | ❌ |
+| Self-hosted / privacy-first | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -186,6 +173,37 @@ OpenRouter · DeepSeek · OpenAI · Anthropic · Google Gemini · GitHub Copilot
 
 ---
 
+## Quick Start — 30 Seconds
+
+```bash
+git clone https://github.com/Vincent-A-Yang/OninOneProxy.git && cd OninOneProxy
+cp .env.example .env        # set INITIAL_PASSWORD to your password
+docker compose up -d
+# Dashboard: http://localhost:20130/dashboard
+# API Endpoint: http://localhost:20130/v1
+```
+
+### Deploy with Your AI Agent
+
+Copy the following prompt and paste it to your AI coding agent (Claude Code, Cursor, Codex, etc.):
+
+> Deploy OninOneProxy on my machine:
+>
+> 1. `git clone https://github.com/Vincent-A-Yang/OninOneProxy.git && cd OninOneProxy`
+> 2. `cp .env.example .env`
+> 3. Edit `.env`: set `INITIAL_PASSWORD` to a strong password (this is your dashboard login)
+> 4. `docker compose up -d`
+> 5. Wait for "Ready" in logs: `docker logs -f oninoneproxy`
+> 6. Open http://localhost:20130/dashboard and log in with your password
+> 7. In the dashboard: add your first Provider (e.g. OpenRouter with your API key)
+> 8. Copy the API key from "Endpoint & Key" page
+> 9. Configure your AI tool: endpoint=`http://localhost:20130/v1`, key=the key you copied
+> 10. Verify: `curl http://localhost:20130/v1/models -H "Authorization: Bearer YOUR_KEY"`
+>
+> The gateway is now running. All requests to port 20130 are routed through your configured providers with automatic failover.
+
+---
+
 ## Configuration
 
 ### Environment Variables
@@ -210,24 +228,6 @@ npm install
 npm run build
 PORT=20130 npm run start
 ```
-
----
-
-## Feature Comparison
-
-| Feature | OninOneProxy | One API | New API | LiteLLM |
-|---------|:---:|:---:|:---:|:---:|
-| Zero-downtime failover | ✅ | ❌ | ❌ | Partial |
-| Multi-key rate stacking | ✅ | ❌ | ❌ | ❌ |
-| MOA Fusion (multi-model) | ✅ | ❌ | ❌ | ❌ |
-| Format translation (3 protocols) | ✅ | ❌ | ❌ | ✅ |
-| Semantic cache (HNSW) | ✅ | ❌ | ❌ | ❌ |
-| Token saving pipeline (4 layers) | ✅ | ❌ | ❌ | ❌ |
-| Smart router (learned weights) | ✅ | ❌ | ❌ | ❌ |
-| OAuth credential management | ✅ | ❌ | ❌ | ❌ |
-| Docker one-liner deploy | ✅ | ✅ | ✅ | ✅ |
-| Dashboard Web UI | ✅ | ✅ | ✅ | ❌ |
-| Self-hosted / privacy-first | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
