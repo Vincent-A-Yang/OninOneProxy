@@ -382,10 +382,19 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
 
   // Sticky session: prefer the model this conversation was previously bound to.
   // This prevents mid-conversation model switches that cause inconsistent behavior.
+  // Fix 5: When Smart Router has learned weights, it takes priority over sticky.
   const sessionKey = deriveSessionKey(body);
   const stickyModel = getStickyModel(sessionKey);
   let previousStickyModel = stickyModel;
-  if (stickyModel && rotatedModels.includes(stickyModel)) {
+  let smartRouterActive = false;
+  try {
+    const stickySettings = await getSettings();
+    smartRouterActive = stickySettings.smartRouterEnabled === true;
+  } catch { /* fail-open */ }
+  if (smartRouterActive) {
+    // Smart Router ordering takes priority — sticky only logs, doesn't reorder
+    if (stickyModel) log.info("COMBO", `sticky ${stickyModel} noted but smart router ordering preserved`);
+  } else if (stickyModel && rotatedModels.includes(stickyModel)) {
     // Move sticky model to front (highest priority)
     rotatedModels = [stickyModel, ...rotatedModels.filter(m => m !== stickyModel)];
     log.info("COMBO", `sticky session → ${stickyModel}`);
@@ -743,12 +752,16 @@ const FUSION_DEFAULTS = {
 // Role prompts deliberately do NOT require tool calling, so Poe-style models
 // (minimax-m3-t etc. that don't support tools) work as non-tool roles too.
 const ROLE_PROMPTS = {
+  executor:
+    "You are the EXECUTOR in a multi-model panel. Focus on practical implementation, working code, and concrete actionable steps. Be precise and complete.",
+  advisor:
+    "You are the ADVISOR in a multi-model panel. Focus on analysis, alternatives, trade-offs, risks, and strategic recommendations. Think broadly.",
   researcher:
     "You are a meticulous researcher. Prioritize factual accuracy and breadth: gather relevant information, note where evidence is strong vs weak, and flag knowledge gaps explicitly. Cite specifics where possible. Prefer being thorough and correct over stylistic polish.",
   coder:
     "You are a senior software engineer. Prioritize correctness and robustness: produce runnable, well-structured code that handles edge cases. Explain key decisions briefly but let the code carry the answer. Guard against off-by-one errors, unhandled exceptions, and untested assumptions.",
   reviewer:
-    "You are a rigorous code and design reviewer. Prioritize finding flaws: evaluate the request for incorrect assumptions, security risks, race conditions, and missing requirements. Be concrete about failure modes and how to fix them. Do not rubber-stamp — surface what others miss.",
+    "You are the REVIEWER in a multi-model panel. Focus on correctness, edge cases, potential bugs, and quality improvements. Be critical.",
   summarizer:
     "You are a clarity specialist. Prioritize structure and brevity: distill the request into its essential points, produce a clear overview with sensible headings, and eliminate redundancy. Make the answer easy to scan and act on.",
   "creative-writer":
@@ -1114,11 +1127,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
 
   // MOA P1.1: Auto-assign roles based on model capabilities.
   // Each role gets a differentiated system prompt to maximize diversity of thought.
-  const ROLE_PROMPTS = {
-    executor: "You are the EXECUTOR in a multi-model panel. Focus on practical implementation, working code, and concrete actionable steps. Be precise and complete.",
-    advisor: "You are the ADVISOR in a multi-model panel. Focus on analysis, alternatives, trade-offs, risks, and strategic recommendations. Think broadly.",
-    reviewer: "You are the REVIEWER in a multi-model panel. Focus on correctness, edge cases, potential bugs, and quality improvements. Be critical.",
-  };
+  // Uses module-level ROLE_PROMPTS (executor/advisor/reviewer + 6 others).
   function assignRole(modelStr) {
     try {
       const slash = modelStr.indexOf("/");
@@ -1131,16 +1140,20 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
     } catch { return "reviewer"; }
   }
   // Build per-slot panel bodies with role-specific prompts.
+  // User-configured roles (cfg.roles) take priority over auto-assignment.
+  const userRoles = cfg.roles || null;
   const slotBodies = normalized.map((slot) => {
-    const role = assignRole(slot.primary);
-    const rolePrompt = ROLE_PROMPTS[role];
+    // Fix 1: user explicit role > auto-assigned role
+    const userRole = userRoles ? getRolePrompt(userRoles, slot.primary, normalized.map(s => s.primary)) : "";
+    const role = userRole ? (userRoles[slot.primary] || "reviewer") : assignRole(slot.primary);
+    const rolePrompt = userRole || ROLE_PROMPTS[role];
     const rb = { ...panelBody };
-    if (Array.isArray(rb.messages)) {
+    if (Array.isArray(rb.messages) && rolePrompt) {
       rb.messages = [{ role: "system", content: rolePrompt }, ...rb.messages];
     }
     return { body: rb, role };
   });
-  log.info("FUSION", `MOA roles: ${slotBodies.map((s, i) => `${normalized[i].primary}=${s.role}`).join(", ")}`);
+  log.info("FUSION", `MOA roles: ${slotBodies.map((s, i) => `${normalized[i].primary}=${s.role}${userRoles ? " (user)" : ""}`).join(", ")}`);
 
   // F1: Each slot goes through withFailover (primary → backup on failure).
   // Slots without backup behave exactly like the original single-model call.
@@ -1160,32 +1173,35 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
           const mm = slash > 0 ? m.slice(slash + 1) : m;
           const sid = registerSource(f5Lid, { provider: p, apiKey: "", model: mm });
           if (sid && isCooling(sid)) {
-            log.info("FUSION", `Panel ${m} is cooling in quota pool`);
+            log.info("FUSION", `Skipping ${m} (cooling down)`);
+            slot._skip = true; // Fix 6: mark for exclusion from panel
           }
         }
       }
     }
   } catch { /* fail-open */ }
 
-  // Roles: optional { "model-string": "role-name" } map. When a slot's
-  // primary model has a role, its panel body is cloned with a role system
-  // message prepended (buildPanelBodyWithRole). Unroleed slots reuse the
-  // shared panelBody with zero overhead — backward compatible.
-  const roles = cfg.roles || null;
+  // Fix 6: Filter out cooling slots before fan-out
+  const activeSlots = normalized.map((slot, i) => ({ slot, body: slotBodies[i], i })).filter(s => !s.slot._skip);
+  if (activeSlots.length === 0) {
+    log.warn("FUSION", "All panels cooling — falling back to full list");
+    // Degrade gracefully: use all slots if everything is cooling
+    for (const s of normalized) delete s._skip;
+    activeSlots.push(...normalized.map((slot, i) => ({ slot, body: slotBodies[i], i })));
+  }
 
   const t0 = Date.now();
   // F4.3: Cap concurrent panel calls so a large D fan-out doesn't hammer
   // upstream. `runner` is invoked lazily by runWithConcurrency — only up to
-  // cfg.maxPanelConcurrency are in flight at once. The returned array is a
-  // set of promises aligned to `normalized`, which collectPanel still
-  // watches via its .finally() accounting.
+  // cfg.maxPanelConcurrency are in flight at once. Uses activeSlots (Fix 6:
+  // cooling slots excluded).
   const calls = runWithConcurrency(
-    normalized,
+    activeSlots,
     cfg.maxPanelConcurrency,
-    (slot, i) => withFailover(slot, slotBodies[i].body, handleSingleModel, cfg, log)
+    (entry) => withFailover(entry.slot, entry.body.body, handleSingleModel, cfg, log)
   );
   const settled = await collectPanel(calls, { ...cfg, minPanel, onProgress });
-  log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms`);
+  log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms (${activeSlots.length}/${normalized.length} panels active)`);
 
   // 2. Collect successful answers.
   // Each settled entry is either null (dropped/straggler) or a withFailover result
@@ -1193,7 +1209,7 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const answers = [];
   for (let i = 0; i < settled.length; i++) {
     const res = settled[i];
-    const slot = normalized[i];
+    const slot = activeSlots[i].slot;
     if (!res) {
       log.warn("FUSION", `Panel ${slot.primary} dropped (straggler/timeout)`);
       continue;
@@ -1212,8 +1228,75 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
       continue;
     }
     // Success — text was already extracted by withFailover (no re-parse needed).
-    answers.push({ model: res.model, text: res.text });
+    answers.push({ model: res.model, text: res.text, slot });
     log.info("FUSION", `Panel ${res.model} ok (${res.text.length} chars${res.usedBackup ? " via backup" : ""})`);
+  }
+
+  // Fix 7: Repetition detection — truncate garbage, mark for retry.
+  function isRepetitive(text) {
+    if (!text || text.length < 200) return false;
+    const tail = text.slice(-200);
+    const chunk = tail.slice(0, 50);
+    if (!chunk.trim()) return false;
+    const count = tail.split(chunk).length - 1;
+    return count >= 3;
+  }
+  function findRepetitionStart(text) {
+    // Find where the repetition begins (search backwards for the repeated chunk)
+    const chunk = text.slice(-200, -150); // 50-char chunk from tail
+    if (!chunk.trim()) return text.length;
+    const idx = text.lastIndexOf(chunk, text.length - 200);
+    return idx > 0 ? idx : text.length;
+  }
+
+  // Fix 3: Validate answers — low quality or repetitive → retry with backup or temperature bump.
+  for (let i = 0; i < answers.length; i++) {
+    const a = answers[i];
+    const text = (a.text || "").trim();
+    const isLowQuality = text.length < 50 || isRepetitive(text);
+    if (!isLowQuality) continue;
+
+    log.warn("FUSION", `Panel ${a.model} low quality (${text.length} chars, repetitive=${isRepetitive(text)}), attempting recovery`);
+    // Truncate repetitive content
+    const cleanText = isRepetitive(text) ? text.slice(0, findRepetitionStart(text)).trim() : text;
+
+    // Try backup model if available
+    const slot = a.slot;
+    if (slot && slot.backup) {
+      try {
+        log.info("FUSION", `Trying backup ${slot.backup} for low-quality panel`);
+        const backupRes = await withFailover({ primary: slot.backup, backup: null }, activeSlots.find(s => s.slot === slot)?.body?.body || panelBody, handleSingleModel, cfg, log);
+        if (backupRes && backupRes.ok && backupRes.text && backupRes.text.trim().length >= 50 && !isRepetitive(backupRes.text)) {
+          answers[i] = { model: backupRes.model, text: backupRes.text, slot };
+          log.info("FUSION", `Backup ${backupRes.model} recovered (${backupRes.text.length} chars)`);
+          continue;
+        }
+      } catch { /* fail-open */ }
+    }
+
+    // No backup or backup failed → retry same model with higher temperature
+    try {
+      const retryBody = { ...panelBody, temperature: Math.min((panelBody.temperature || 0.7) + 0.3, 1.5) };
+      const retryRes = await withFailover(slot || { primary: a.model, backup: null }, retryBody, handleSingleModel, cfg, log);
+      if (retryRes && retryRes.ok && retryRes.text && retryRes.text.trim().length >= 50 && !isRepetitive(retryRes.text)) {
+        answers[i] = { model: retryRes.model, text: retryRes.text, slot };
+        log.info("FUSION", `Retry recovered for ${a.model} (${retryRes.text.length} chars)`);
+        continue;
+      }
+    } catch { /* fail-open */ }
+
+    // Recovery failed → use truncated text if it has substance, else mark low quality
+    if (cleanText.length >= 50) {
+      answers[i] = { ...a, text: cleanText };
+    } else {
+      answers[i] = { ...a, lowQuality: true };
+    }
+  }
+  // Remove answers that are still low quality after recovery attempts
+  const qualityAnswers = answers.filter(a => !a.lowQuality);
+  if (qualityAnswers.length > 0) {
+    answers.length = 0;
+    answers.push(...qualityAnswers);
   }
 
   // 3. Degrade gracefully when the panel is too thin to fuse.
@@ -1247,16 +1330,21 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
       answers.map((a, i) => `[Expert ${i + 1}]\n${a.text.slice(0, 2000)}`).join("\n\n"),
       "=== END ===",
     ].join("\n");
+    // Fix 4: 60s timeout per refinement call (no max_tokens limit — let model decide output length)
+    const REFINE_TIMEOUT_MS = 60000;
     const refineCalls = answers.map((a) => {
       const refineBody = { ...panelBody, messages: [...(panelBody.messages || []), { role: "user", content: refinePrompt }] };
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REFINE_TIMEOUT_MS);
       return handleSingleModel(refineBody, a.model).then(async (res) => {
+        clearTimeout(timer);
         if (!res || !res.ok) return a; // fail-open: keep original
         try {
           const json = await res.json();
           const text = extractPanelText(json);
           return text && text.trim().length > 20 ? { model: a.model, text } : a;
         } catch { return a; }
-      }).catch(() => a);
+      }).catch(() => { clearTimeout(timer); return a; });
     });
     const refined = await Promise.all(refineCalls);
     finalAnswers = refined;
