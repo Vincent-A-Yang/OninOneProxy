@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import PropTypes from "prop-types";
+import { translate } from "@/i18n/runtime";
 import { Card, Button, Input, Modal, CardSkeleton, Toggle, ConfirmModal } from "@/shared/components";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import {
@@ -946,6 +947,33 @@ export default function APIPageClient({ machineId }) {
             </div>
           </div>
         )}
+      </Card>
+
+      {/* Supported Protocols */}
+      <Card>
+        <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <span className="material-symbols-outlined text-primary">swap_horiz</span>
+          {translate("Supported Protocols")}
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm">
+          {[
+            { label: "OpenAI Chat", path: "/v1/chat/completions", desc: "GPT / Claude / Gemini / DeepSeek" },
+            { label: "OpenAI Responses", path: "/v1/responses", desc: "Codex / o-series" },
+            { label: "Anthropic Messages", path: "/v1/messages", desc: "Claude native format" },
+            { label: "Gemini", path: "/v1beta/models/{model}:generateContent", desc: "Gemini native format" },
+            { label: "Embeddings", path: "/v1/embeddings", desc: "RAG / semantic search" },
+            { label: "Image Generation", path: "/v1/images/generations", desc: "DALL-E / FLUX / Imagen" },
+            { label: "TTS", path: "/v1/audio/speech", desc: "OpenAI / Edge / ElevenLabs" },
+            { label: "STT", path: "/v1/audio/transcriptions", desc: "Whisper / Groq / Gemini" },
+            { label: "Web Search", path: "/v1/search", desc: "Tavily / Exa / Brave" },
+          ].map((ep) => (
+            <div key={ep.path} className="flex flex-col gap-0.5 p-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg)]">
+              <span className="font-medium text-[var(--color-text)]">{ep.label}</span>
+              <code className="text-xs text-[var(--color-primary)] font-mono break-all">{currentEndpoint.replace(/\/v1$/, "")}{ep.path}</code>
+              <span className="text-xs text-[var(--color-text-muted)]">{ep.desc}</span>
+            </div>
+          ))}
+        </div>
       </Card>
 
       {/* API Keys */}

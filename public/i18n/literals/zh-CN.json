@@ -1266,5 +1266,6 @@
   "Last Hit": "最后命中",
   "Clear Response Cache": "清除响应缓存",
   "Clear Cache": "清除缓存",
-  "Clearing…": "清除中…"
+  "Clearing…": "清除中…",
+  "Supported Protocols": "支持的协议"
 }
