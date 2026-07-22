@@ -11,7 +11,7 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { translate } from "@/i18n/runtime";
 import Button from "./Button";
 import { ConfirmModal } from "./Modal";
-import NineRemotePromoModal from "./NineRemotePromoModal";
+
 import Tooltip from "./Tooltip";
 
 // const VISIBLE_MEDIA_KINDS = ["embedding", "image", "imageToText", "tts", "stt", "webSearch", "webFetch", "video", "music"];
@@ -22,10 +22,10 @@ const COMBINED_WEB_ITEM = { id: "web", label: "Web Fetch & Search", icon: "trave
 const navItems = [
   { href: "/dashboard/endpoint", label: "Endpoint & Key", icon: "api" },
   { href: "/dashboard/providers", label: "Providers", icon: "dns" },
-  // { href: "/dashboard/basic-chat", label: "Basic Chat", icon: "chat" }, // Hidden
+  { href: "/dashboard/basic-chat", label: "nav.testChat", icon: "chat" },
   { href: "/dashboard/combos", label: "Combos", icon: "layers" },
+  { href: "/dashboard/smart-router", label: "nav.smartRouter", icon: "route" },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },
-  { href: "/dashboard/quota", label: "Quota Tracker", icon: "data_usage" },
   { href: "/dashboard/token-saver", label: "nav.tokenSaver", icon: "savings" },
   { href: "/dashboard/cache", label: "Cache", icon: "cached" },
   { href: "/dashboard/quota-pool", label: "nav.quotaPool", icon: "balance", tooltip: "Quota & Rate Pool: Aggregates same-model quotas across different providers for unified scheduling." },
@@ -41,13 +41,12 @@ const debugItems = [
 
 const systemItems = [
   { href: "/dashboard/proxy-pools", label: "Proxy Pools", icon: "lan" },
-  { href: "/dashboard/skills", label: "Skills", icon: "extension" },
 ];
 
 export default function Sidebar({ onClose }) {
   const pathname = usePathname();
   const [mediaOpen, setMediaOpen] = useState(false);
-  const [showRemoteModal, setShowRemoteModal] = useState(false);
+
   const [isDisconnected, setIsDisconnected] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
@@ -136,26 +135,28 @@ export default function Sidebar({ onClose }) {
             </div>
           </Link>
           {updateInfo && (
-            <div className="flex flex-col gap-1.5 rounded p-1 -m-1">
+            <div className="flex flex-col gap-1.5 rounded-lg p-2 -m-1 bg-green-600/5 dark:bg-amber-500/5 border border-green-600/20 dark:border-amber-500/20">
               <span className="text-xs font-semibold text-green-600 dark:text-amber-500">
                 {translate("↑ New version available: v{version}", { version: updateInfo.latestVersion })}
               </span>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => setShowUpdateModal(true)}
-                  className="px-2 py-1 rounded bg-green-600 hover:bg-green-700 dark:bg-amber-500 dark:hover:bg-amber-600 text-white text-[11px] font-semibold transition-colors cursor-pointer"
-                >
-                  {translate("Update now")}
-                </button>
-                <button
-                  onClick={() => copy(INSTALL_CMD)}
-                  title={translate("Copy install command")}
+                  onClick={() => copy(updateInfo.updateCmd || INSTALL_CMD)}
                   className="flex-1 text-left hover:opacity-80 transition-opacity cursor-pointer min-w-0"
+                  title={updateInfo.updateCmd || INSTALL_CMD}
                 >
                   <code className="block text-[10px] text-green-600/80 dark:text-amber-400/70 font-mono truncate">
-                    {copied ? translate("✓ copied!") : INSTALL_CMD}
+                    {copied ? translate("✓ copied!") : (updateInfo.updateCmd || INSTALL_CMD)}
                   </code>
                 </button>
+                <a
+                  href={updateInfo.changelogUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="px-2 py-0.5 rounded bg-green-600 hover:bg-green-700 dark:bg-amber-500 dark:hover:bg-amber-600 text-white text-[10px] font-semibold transition-colors shrink-0"
+                >
+                  {translate("Changelog")}
+                </a>
               </div>
             </div>
           )}
@@ -302,19 +303,6 @@ export default function Sidebar({ onClose }) {
               ) : null;
             })}
 
-            {/* Remote */}
-            <button
-              onClick={() => setShowRemoteModal(true)}
-              className={cn(
-                "flex items-center gap-3 px-3 py-1 rounded-lg transition-all group w-full",
-                "text-text-muted hover:bg-surface-2 hover:text-text-main"
-              )}
-            >
-              <span className="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">
-                computer
-              </span>
-              <span className="text-[13px] font-medium">{translate("Remote")}</span>
-            </button>
 
             {/* Settings */}
             <Link
@@ -342,8 +330,6 @@ export default function Sidebar({ onClose }) {
 
       </aside>
 
-      {/* Remote Promo Modal */}
-      <NineRemotePromoModal isOpen={showRemoteModal} onClose={() => setShowRemoteModal(false)} />
 
       {/* Update Confirmation Modal */}
       <ConfirmModal

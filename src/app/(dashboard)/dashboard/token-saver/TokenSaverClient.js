@@ -496,7 +496,7 @@ export default function TokenSaverClient() {
         <div className="flex items-center justify-between pt-4 gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
-              {translate("Compress LLM output")}{" "}
+              {translate("Terse replies")}{" "}
               <a
                 href="https://github.com/JuliusBrussee/caveman"
                 target="_blank"
@@ -507,10 +507,10 @@ export default function TokenSaverClient() {
               </a>
             </p>
             <p className="text-sm text-text-muted">
-              {translate("Terse-style system prompt → ~65% fewer output tokens (up to 87%)")}
+              {translate("Drop filler and pleasantries, keep full technical substance")}
             </p>
             <p className="text-xs text-text-muted mt-1">
-              {translate("Injects a system instruction that tells the model to answer tersely — short sentences, no filler, no restating the question. Higher levels trade readability for more savings. Wenyan levels (文言) require a Chinese locale and produce classical-Chinese style output.")}
+              {translate("Tells the model to answer tersely — no filler, no hedging, no restating the question. lite removes fluff while keeping grammar; higher levels trade readability for more savings. Complements Ponytail: Caveman compresses what it says, Ponytail compresses what it builds.")}
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
@@ -551,7 +551,7 @@ export default function TokenSaverClient() {
         <div className="flex items-center justify-between pt-4 mt-4 border-t border-border gap-4 flex-wrap">
           <div className="min-w-0 flex-1">
             <p className="font-medium">
-              {translate("Lazy senior dev")}{" "}
+              {translate("Efficient coding")}{" "}
               <a
                 href="https://github.com/DietrichGebert/ponytail"
                 target="_blank"
@@ -562,10 +562,10 @@ export default function TokenSaverClient() {
               </a>
             </p>
             <p className="text-sm text-text-muted">
-              {translate("Bias the model toward minimal code: YAGNI, reuse stdlib, deletion over addition")}
+              {translate("Minimal code + reuse existing + self-check: ~54% less code, 100% safe")}
             </p>
             <p className="text-xs text-text-muted mt-1">
-              {translate("Injects a system instruction that frames the model as a lazy senior developer — prefer reusing standard libraries over new code, delete rather than add, never build features that aren't requested. Reduces output length and surface area. Combine with Caveman for compounding savings.")}
+              {translate("Frames the model as a lazy senior developer: reuse what already exists, write the minimum that works, then verify its own work for errors before responding. Complements Caveman — Ponytail shrinks what it builds, Caveman shrinks what it says.")}
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">

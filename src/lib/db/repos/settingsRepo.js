@@ -45,7 +45,7 @@ const DEFAULT_SETTINGS = {
   // synchronous compression behavior.
   headroomAsyncMode: false,
   cavemanEnabled: true,
-  cavemanLevel: "full",
+  cavemanLevel: "lite",
   ponytailEnabled: true,
   ponytailLevel: "full",
   // F1: Fusion primary/backup failover. When true, handleFusionChat will automatically
@@ -80,12 +80,12 @@ const DEFAULT_SETTINGS = {
   // physical source (provider/key/model) for the logical model. When
   // smartErrorHandlingEnabled is true, upstream errors are run through
   // errorAnalyzer to drive cool_down / switch_key / switch_model decisions.
-  quotaPoolEnabled: false,
-  smartErrorHandlingEnabled: false,
+  quotaPoolEnabled: true,
+  smartErrorHandlingEnabled: true,
   // F6: Per-provider limits enforcement. Defaults off so existing OninOneProxy
   // behavior is preserved. When enabled, request counts / token usage are
   // tracked per provider and capped according to configured limits.
-  providerLimitsEnabled: false,
+  providerLimitsEnabled: true,
   // F4: Custom fake-response patterns for responseValidator.
   // Stored as JSON array (see loadCustomPatterns in responseValidator.js):
   //   [{ id, pattern, caseInsensitive?, isRegex?, severity?, type? }]
@@ -107,7 +107,7 @@ const DEFAULT_SETTINGS = {
   // deployments don't lose data on the next container restart. Operators
   // who want retention set autoCleanupEnabled=true + dataRetentionDays=30.
   dataRetentionDays: 30,
-  autoCleanupEnabled: false,
+  autoCleanupEnabled: true,
   // Stage 11.2.4: log rotation toggle. The actual rotation policy is
   // applied at the Docker logging driver level (json-file with max-size
   // and max-file), not inside Node.js. This flag is exposed so the
@@ -145,7 +145,7 @@ const DEFAULT_SETTINGS = {
   //   - "balance" (default): switch immediately but apply 30s dedupe so
   //     the same source isn't re-tried too quickly.
   //   - "performance_first": pure round-robin, ignores cache stickiness.
-  stickySessionMode: "balance",
+  stickySessionMode: "cache_first",
   // Task 10: Model sync configuration. Operators opt in via Dashboard
   // (profile page → "模型同步" card). When modelSyncEnabled is true and
   // modelSyncFrequency is not "manual", custom-server.js starts the
@@ -155,8 +155,8 @@ const DEFAULT_SETTINGS = {
   //   - "12h":    every 12h
   //   - "daily":  every 24h
   //   - "manual": no auto schedule (only POST /api/models/sync triggers)
-  modelSyncEnabled: false,
-  modelSyncFrequency: "manual",
+  modelSyncEnabled: true,
+  modelSyncFrequency: "hourly",
 };
 
 async function readRaw() {

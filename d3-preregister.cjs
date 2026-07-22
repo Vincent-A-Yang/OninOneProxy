@@ -84,11 +84,11 @@ function buildPrefixMap(db) {
 
 /**
  * Load quotaPool module. Returns { registerSource, getLogicalModelId, maskKey }.
- * Uses require() which works because open-sse/services/quotaPool.js is shipped
- * as source (not compiled) in the container.
+ * Uses dynamic import() because quotaPool.js is an ES module — require() causes
+ * "Unexpected module status 0" when the ESM loader hasn't finished initializing.
  */
-function loadQuotaPool() {
-  const mod = require("/app/open-sse/services/quotaPool.js");
+async function loadQuotaPool() {
+  const mod = await import("/app/open-sse/services/quotaPool.js");
   return {
     registerSource: mod.registerSource,
     getLogicalModelId: mod.getLogicalModelId,
@@ -379,7 +379,7 @@ async function runD3PreRegister() {
   try {
     db = new Database(DB_PATH, {});
     ensureSourcesTable(db);
-    const { registerSource, getLogicalModelId, maskKey } = loadQuotaPool();
+    const { registerSource, getLogicalModelId, maskKey } = await loadQuotaPool();
     // Local getEffectiveLimits — reads providerLimits table directly via
     // better-sqlite3 (bypasses @/lib webpack alias that breaks ESM import
     // of providerLimits.js in custom-server.js runtime context).

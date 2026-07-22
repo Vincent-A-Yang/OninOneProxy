@@ -368,3 +368,82 @@ export function isHeadroomPhantomSavings(stats, diagnostics, minShrinkRatio = 0.
   if (before <= 0 || after <= 0) return false;
   return after >= before * (1 - minShrinkRatio);
 }
+
+// ─── Phase 2: Active health monitoring ─────────────────────────────────────
+// Instead of purely fail-open silence, track Headroom reachability so the
+// dashboard can show real-time status and degraded state is observable.
+const healthState = {
+  ok: false,
+  degraded: false,
+  lastCheck: 0,
+  latencyMs: 0,
+  lastError: null,
+  consecutiveFailures: 0,
+  compressionsTotal: 0,
+  bytesSaved: 0,
+};
+
+const HEALTH_INTERVAL_MS = 60_000;
+const DEGRADED_THRESHOLD = 3;
+let healthTimer = null;
+let lastHealthUrl = null;
+
+async function probeHeadroom(url) {
+  const start = Date.now();
+  try {
+    const endpoint = url.replace(/\/$/, "") + "/health";
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch(endpoint, { signal: controller.signal, method: "GET" });
+    clearTimeout(timeout);
+    const latencyMs = Date.now() - start;
+    if (res.ok) {
+      healthState.ok = true;
+      healthState.degraded = false;
+      healthState.latencyMs = latencyMs;
+      healthState.lastError = null;
+      healthState.consecutiveFailures = 0;
+    } else {
+      markFailure(`HTTP ${res.status}`);
+    }
+  } catch (e) {
+    markFailure(describeFetchError(e));
+  }
+  healthState.lastCheck = Date.now();
+}
+
+function markFailure(reason) {
+  healthState.ok = false;
+  healthState.lastError = reason;
+  healthState.consecutiveFailures += 1;
+  if (healthState.consecutiveFailures >= DEGRADED_THRESHOLD) {
+    healthState.degraded = true;
+  }
+}
+
+/** Start periodic health probing for a given Headroom URL. Idempotent. */
+export function startHeadroomHealthProbe(url) {
+  if (!url) return;
+  if (healthTimer && lastHealthUrl === url) return;
+  stopHeadroomHealthProbe();
+  lastHealthUrl = url;
+  probeHeadroom(url);
+  healthTimer = setInterval(() => probeHeadroom(url), HEALTH_INTERVAL_MS);
+  if (healthTimer.unref) healthTimer.unref();
+}
+
+export function stopHeadroomHealthProbe() {
+  if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+  lastHealthUrl = null;
+}
+
+/** Record a successful compression for observability stats. */
+export function recordHeadroomCompression(bytesBefore, bytesAfter) {
+  healthState.compressionsTotal += 1;
+  if (bytesBefore > bytesAfter) healthState.bytesSaved += bytesBefore - bytesAfter;
+}
+
+/** Current health snapshot for API/dashboard consumption. */
+export function getHeadroomHealth() {
+  return { ...healthState };
+}
