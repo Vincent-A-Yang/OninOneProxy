@@ -38,7 +38,7 @@ export default function JcodeToolCard({
   const getConfigStatus = () => {
     if (!jcodeStatus?.installed) return null;
     if (!jcodeStatus?.hasOninOneProxy) return "not_configured";
-    const currentProvider = jcodeStatus.config?.providers?.["oninoneproxy"];
+    const currentProvider = jcodeStatus.config?.providers?.["OninOneProxy"];
     if (!currentProvider) return "not_configured";
     return matchKnownEndpoint(currentProvider.base_url, { tunnelPublicUrl, tailscaleUrl }) ? "configured" : "other";
   };
@@ -76,7 +76,7 @@ export default function JcodeToolCard({
   useEffect(() => {
     if (jcodeStatus?.installed && !hasInitializedModel.current) {
       hasInitializedModel.current = true;
-      const provider = jcodeStatus.config?.providers?.["oninoneproxy"];
+      const provider = jcodeStatus.config?.providers?.["OninOneProxy"];
       if (provider) {
         if (provider.default_model) {
           setSelectedModel(provider.default_model);
@@ -184,16 +184,16 @@ export default function JcodeToolCard({
       ? selectedApiKey
       : (!cloudEnabled ? "sk_oninoneproxy" : "<API_KEY_FROM_DASHBOARD>");
 
-    const configToml = `[providers.oninoneproxy]
+    const configToml = `[providers.OninOneProxy]
 type = "openai-compatible"
 base_url = "${getEffectiveBaseUrl()}"
 auth = "bearer"
 api_key_env = "JCODE_ONINONEPROXY_API_KEY"
-env_file = "provider-oninoneproxy.env"
+env_file = "provider-OninOneProxy.env"
 default_model = "${selectedModel || "cc/claude-opus-4-7"}"
 requires_api_key = true
 
-[[providers.oninoneproxy.models]]
+[[providers.OninOneProxy.models]]
 id = "${selectedModel || "cc/claude-opus-4-7"}"`;
 
     const envContent = `JCODE_ONINONEPROXY_API_KEY="${keyToUse}"`;
@@ -204,7 +204,7 @@ id = "${selectedModel || "cc/claude-opus-4-7"}"`;
         content: configToml,
       },
       {
-        filename: "~/.config/jcode/provider-oninoneproxy.env",
+        filename: "~/.config/jcode/provider-OninOneProxy.env",
         content: envContent,
       },
     ];
@@ -250,7 +250,7 @@ id = "${selectedModel || "cc/claude-opus-4-7"}"`;
                     <code className="block mt-2 p-2 bg-black/20 rounded text-xs font-mono">
                       curl -fsSL https://raw.githubusercontent.com/1jehuang/jcode/master/scripts/install.sh | bash
                     </code>
-                    <p className="text-sm text-text-muted mt-2">Manual configuration is still available if oninoneproxy is deployed on a remote server.</p>
+                    <p className="text-sm text-text-muted mt-2">Manual configuration is still available if OninOneProxy is deployed on a remote server.</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 pl-9">
@@ -300,12 +300,12 @@ id = "${selectedModel || "cc/claude-opus-4-7"}"`;
                 </div>
 
                 {/* Current configured */}
-                {jcodeStatus?.config?.providers?.["oninoneproxy"]?.base_url && (
+                {jcodeStatus?.config?.providers?.["OninOneProxy"]?.base_url && (
                   <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
                     <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">Current</span>
                     <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                     <span className="min-w-0 truncate rounded bg-surface/40 px-2 py-2 text-xs text-text-muted sm:py-1.5">
-                      {jcodeStatus.config.providers["oninoneproxy"].base_url}
+                      {jcodeStatus.config.providers["OninOneProxy"].base_url}
                     </span>
                   </div>
                 )}
@@ -331,8 +331,8 @@ id = "${selectedModel || "cc/claude-opus-4-7"}"`;
                 {/* Usage hint */}
                 <div className="flex flex-col gap-1 p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
                   <p className="text-xs font-medium text-blue-600 dark:text-blue-400">Usage:</p>
-                  <code className="text-xs font-mono text-text-muted">jcode --provider-profile oninoneproxy</code>
-                  <code className="text-xs font-mono text-text-muted">jcode --provider-profile oninoneproxy --model {selectedModel || "cc/claude-opus-4-7"}</code>
+                  <code className="text-xs font-mono text-text-muted">jcode --provider-profile OninOneProxy</code>
+                  <code className="text-xs font-mono text-text-muted">jcode --provider-profile OninOneProxy --model {selectedModel || "cc/claude-opus-4-7"}</code>
                 </div>
               </div>
 

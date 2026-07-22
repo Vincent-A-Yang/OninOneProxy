@@ -146,6 +146,25 @@ function maskEndpoint(endpoint) {
   }
 }
 
+/**
+ * Filter out messages containing tool_calls/tool_use from compression.
+ * Compressing these would break the JSON structure the model needs to parse.
+ * Only text-only messages are safe to compress.
+ */
+function filterToolMessages(messages) {
+  if (!Array.isArray(messages)) return messages;
+  return messages.map(msg => {
+    if (!msg || typeof msg !== "object") return msg;
+    // Skip compression for messages with tool_calls (assistant) or tool role
+    if (msg.tool_calls || msg.role === "tool" || msg.role === "function") return msg;
+    // Skip messages with tool_use/tool_result content blocks (Claude format)
+    if (Array.isArray(msg.content) && msg.content.some(b =>
+      b && (b.type === "tool_use" || b.type === "tool_result" || b.type === "function_call")
+    )) return msg;
+    return msg;
+  });
+}
+
 function hasUnsafeResponsesInputForCompression(body) {
   if (!Array.isArray(body?.input)) return false;
   return body.input.some((item) => {
@@ -216,7 +235,7 @@ function applyCompressedMessages(body, format, model, oai, compressedMessages) {
 
 // Compress request body via Headroom proxy. Fail-open: returns null on any error.
 // /v1/compress only understands OpenAI shape, so Claude bodies are translated
-// to OpenAI, compressed, then translated back using 9Router's own translators.
+// to OpenAI, compressed, then translated back using OninOneProxy's own translators.
 //
 // `asyncMode` (Stage 2.4): when true, returns a cached compressed result if
 // available and refreshes the cache in the background. The first request with
@@ -291,7 +310,7 @@ export async function compressWithHeadroom(body, { enabled, url, model, format, 
       if (diagnostics) diagnostics.asyncCache = "miss";
     }
 
-    const data = await callCompress(url, oaiMessages, model, timeoutMs, compressUserMessages, diagnostics || {});
+    const data = await callCompress(url, filterToolMessages(oaiMessages), model, timeoutMs, compressUserMessages, diagnostics || {});
     if (!data) return null;
 
     // Apply the compressed messages to body using the same shape-specific

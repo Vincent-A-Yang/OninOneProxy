@@ -51,6 +51,17 @@ export const DEFAULT_CAPABILITIES = {
   maxOutput: 64000,
 };
 
+// P2.2: Provider-side prompt caching strategies.
+// Used by the router to prefer providers with cache advantages for repeated prompts.
+export const PROVIDER_CACHE_STRATEGIES = {
+  openai: { type: "prefix_auto", minTokens: 1024, discount: 0.5 },
+  anthropic: { type: "explicit_cache_control", discount: 0.1 },
+  deepseek: { type: "prefix_auto", discount: 0.5 },
+  nvidia: { type: "prefix_auto", discount: 0 },  // cache hits free
+  "longcat": { type: "prefix_auto", discount: 0 },  // cache hits free
+  google: { type: "prefix_auto", minTokens: 1024, discount: 0.5 },
+};
+
 // User-added model metadata can carry dashboard service kinds instead of the
 // runtime capability names used here. Map those typed model kinds into input /
 // output capabilities so custom vision models are not treated as text-only.

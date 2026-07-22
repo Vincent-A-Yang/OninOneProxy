@@ -46,7 +46,10 @@ export function isUnrecoverableRefreshError(result) {
 }
 
 export function getRefreshLeadMs(provider) {
-  return REFRESH_LEAD_MS[provider] || TOKEN_EXPIRY_BUFFER_MS;
+  const base = REFRESH_LEAD_MS[provider] || TOKEN_EXPIRY_BUFFER_MS;
+  // Stagger refresh across multiple accounts: add random 0-10% jitter
+  // so simultaneous accounts don't all refresh at the same instant.
+  return base + Math.floor(Math.random() * base * 0.1);
 }
 
 export function parseVertexSaJson(apiKey) {

@@ -1,4 +1,7 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings } from "@/lib/localDb";
+﻿import {
+  getProviderConnections, validateApiKey,
+  updateProviderConnection, getSettings,
+} from "@/lib/localDb";
 import { resolveConnectionProxyConfig } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -243,7 +246,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
-  const backoffLevel = conn?.backoffLevel || 0;
+  const backoffLevel = conn?.[`modelBackoff_${model}`] || 0;
 
   // Provider-specific precise cooldown (e.g. codex usage_limit_reached resets_at) overrides backoff
   let shouldFallback, cooldownMs, newBackoffLevel;
@@ -265,7 +268,7 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     lastError: reason,
     errorCode: status,
     lastErrorAt: new Date().toISOString(),
-    backoffLevel: newBackoffLevel ?? backoffLevel
+    [`modelBackoff_${model}`]: newBackoffLevel ?? backoffLevel
   });
 
   const lockKey = Object.keys(lockUpdate)[0];
@@ -293,16 +296,21 @@ export async function clearAccountError(connectionId, currentConnection, model =
   const conn = currentConnection._connection || currentConnection;
   const now = Date.now();
   const allLockKeys = Object.keys(conn).filter(k => k.startsWith("modelLock_"));
+  const allBackoffKeys = Object.keys(conn).filter(k => k.startsWith("modelBackoff_"));
 
-  if (!conn.testStatus && !conn.lastError && allLockKeys.length === 0) return;
+  if (!conn.testStatus && !conn.lastError && allLockKeys.length === 0 && allBackoffKeys.length === 0) return;
 
-  // Keys to clear: current model's lock + all expired locks
+  // Keys to clear: current model's lock + all expired locks + per-model backoff (current/expired)
   const keysToClear = allLockKeys.filter(k => {
     if (model && k === `modelLock_${model}`) return true; // succeeded model
     if (model && k === "modelLock___all") return true;    // account-level lock
     const expiry = conn[k];
     return expiry && new Date(expiry).getTime() <= now;   // expired
-  });
+  }).concat(allBackoffKeys.filter(k => {
+    if (model && k === `modelBackoff_${model}`) return true; // succeeded model
+    const val = conn[k];
+    return val === 0; // expired (reset to 0)
+  }));
 
   if (keysToClear.length === 0 && conn.testStatus !== "unavailable" && !conn.lastError) return;
 
@@ -314,10 +322,11 @@ export async function clearAccountError(connectionId, currentConnection, model =
   });
 
   const clearObj = Object.fromEntries(keysToClear.map(k => [k, null]));
+  Object.assign(clearObj, Object.fromEntries(allBackoffKeys.map(k => [k, null])));
 
   // Only reset error state if no active locks remain
   if (remainingActiveLocks.length === 0) {
-    Object.assign(clearObj, { testStatus: "active", lastError: null, lastErrorAt: null, backoffLevel: 0 });
+    Object.assign(clearObj, { testStatus: "active", lastError: null, lastErrorAt: null });
   }
 
   await updateProviderConnection(connectionId, clearObj);

@@ -76,7 +76,7 @@ const readConfig = async () => {
 // Check if config has OninOneProxy settings
 const hasOninOneProxyConfig = (config) => {
   if (!config) return false;
-  return config.includes("model_provider = \"oninoneproxy\"") || config.includes("[model_providers.oninoneproxy]");
+  return config.includes("model_provider = \"OninOneProxy\"") || config.includes("[model_providers.OninOneProxy]");
 };
 
 // GET - Check codex CLI and read current settings
@@ -130,12 +130,12 @@ export async function POST(request) {
 
     // Update only OninOneProxy related fields (api_key goes to auth.json, not config.toml)
     parsed.model = model;
-    parsed.model_provider = "oninoneproxy";
+    parsed.model_provider = "OninOneProxy";
 
-    // Update or create oninoneproxy provider section (no api_key - Codex reads from auth.json)
+    // Update or create OninOneProxy provider section (no api_key - Codex reads from auth.json)
     // Ensure /v1 suffix is added only once
     const normalizedBaseUrl = baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
-    setNestedSection(parsed, "model_providers.oninoneproxy", {
+    setNestedSection(parsed, "model_providers.OninOneProxy", {
       name: "OninOneProxy",
       base_url: normalizedBaseUrl,
       wire_api: "responses",
@@ -195,14 +195,14 @@ export async function DELETE() {
       throw error;
     }
 
-    // Remove OninOneProxy related root fields only if they point to oninoneproxy
-    if (parsed.model_provider === "oninoneproxy") {
+    // Remove OninOneProxy related root fields only if they point to OninOneProxy
+    if (parsed.model_provider === "OninOneProxy") {
       delete parsed.model;
       delete parsed.model_provider;
     }
 
-    // Remove oninoneproxy provider section
-    deleteNestedSection(parsed, "model_providers.oninoneproxy");
+    // Remove OninOneProxy provider section
+    deleteNestedSection(parsed, "model_providers.OninOneProxy");
 
     // Remove subagent configuration
     deleteNestedSection(parsed, "agents.subagent");

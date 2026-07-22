@@ -1,29 +1,28 @@
-// Pollinations — keyless, 1 concurrent/IP
-// baseUrl: https://text.pollinations.ai/openai/v1
+/**
+ * Pollinations AI — anonymous free tier (no API key required).
+ * https://pollinations.ai — GPT-OSS 20B and other open models.
+ */
 export default {
   id: "pollinations",
-  priority: 65,
-  hasFree: true,
-  alias: "pollinations",
-  uiAlias: "pollinations",
+  alias: "poll",
+  category: "freeTier",
+  noAuth: true,
   display: {
     name: "Pollinations",
-    icon: "local_florist",
-    color: "#EC4899",
+    icon: "eco",
+    color: "#4CAF50",
     textIcon: "PL",
-    description: "Keyless free gateway (1 concurrent/IP)",
+    website: "https://pollinations.ai",
+    notice: { signupUrl: "https://pollinations.ai" },
   },
-  category: "free",
-  authType: "none",
-  noAuth: true,
   transport: {
+    baseUrl: "https://text.pollinations.ai/openai",
     format: "openai",
-    baseUrl: "https://text.pollinations.ai/openai/v1",
-    noAuth: true,
   },
-  auth: { header: "Authorization", scheme: "bearer", source: [] },
-  executor: "default",
-  models: [],
-  passthroughModels: true,
-  features: { streaming: true, tools: false, vision: false },
+  models: [
+    { id: "openai", name: "GPT-OSS 20B (Pollinations)" },
+    { id: "openai-large", name: "GPT-OSS Large (Pollinations)" },
+    { id: "llama", name: "Llama (Pollinations)" },
+    { id: "mistral", name: "Mistral (Pollinations)" },
+  ],
 };

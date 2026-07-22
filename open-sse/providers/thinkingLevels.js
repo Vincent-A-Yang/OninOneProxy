@@ -44,3 +44,37 @@ export function getThinkingLevels(provider, model) {
   if (caps.thinkingCanDisable === false) levels = levels.filter((l) => l !== "none");
   return levels;
 }
+
+// Ordered by intensity for downgrade resolution.
+const LEVEL_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "thinking"];
+
+/**
+ * Clamp a requested thinking level to the model's supported levels.
+ * If the requested level isn't supported, returns the highest supported level
+ * that is <= the requested intensity. This enables transparent downgrade:
+ * client requests "xhigh" but model only supports up to "high" → returns "high".
+ *
+ * @param {string} provider - Provider name
+ * @param {string} model - Model name
+ * @param {string} requestedLevel - The level the client requested (e.g. "xhigh")
+ * @returns {string|null} - The clamped level, or null if model has no reasoning
+ */
+export function clampThinkingLevel(provider, model, requestedLevel) {
+  if (!requestedLevel) return requestedLevel;
+  const supported = getThinkingLevels(provider, model);
+  if (!supported) return null; // model has no reasoning — strip thinking
+  if (supported.includes(requestedLevel)) return requestedLevel; // already valid
+
+  // Find the highest supported level <= requested intensity
+  const reqIdx = LEVEL_ORDER.indexOf(requestedLevel);
+  if (reqIdx < 0) return supported[supported.length - 1]; // unknown level → max supported
+
+  let best = supported[0];
+  for (const level of supported) {
+    const lvlIdx = LEVEL_ORDER.indexOf(level);
+    if (lvlIdx <= reqIdx && lvlIdx >= LEVEL_ORDER.indexOf(best)) {
+      best = level;
+    }
+  }
+  return best;
+}

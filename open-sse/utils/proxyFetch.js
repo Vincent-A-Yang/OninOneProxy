@@ -11,6 +11,38 @@ const proxyDispatchers = createLruMap({
   maxEntries: MEMORY_CONFIG.proxyDispatchersMaxSize,
 });
 
+// === Proxy Health Tracker (P3 6.1) ===
+// Tracks failed proxies and temporarily blocks them from being used.
+// When a proxy fails with a network error, it's marked as failed for a
+// cooldown period. Subsequent requests skip failed proxies, achieving
+// automatic proxy rotation without restructuring the fetch layer.
+const failedProxies = new Map(); // proxyUrl → { failedAt, error }
+const PROXY_COOLDOWN_MS = 60_000; // 1 minute cooldown for failed proxies
+
+function markProxyFailed(proxyUrl, error) {
+  if (!proxyUrl) return;
+  failedProxies.set(proxyUrl, { failedAt: Date.now(), error: error?.message || String(error) });
+  // Lazy cleanup: remove entries older than 5 minutes
+  if (failedProxies.size > 50) {
+    const cutoff = Date.now() - 5 * 60_000;
+    for (const [url, info] of failedProxies) {
+      if (info.failedAt < cutoff) failedProxies.delete(url);
+    }
+  }
+}
+
+function isProxyFailed(proxyUrl) {
+  if (!proxyUrl) return false;
+  const info = failedProxies.get(proxyUrl);
+  if (!info) return false;
+  if (Date.now() - info.failedAt > PROXY_COOLDOWN_MS) {
+    failedProxies.delete(proxyUrl); // cooldown expired, give it another chance
+    return false;
+  }
+  return true;
+}
+// === End Proxy Health Tracker ===
+
 // ─── TLS fingerprinting via got-scraping (browser-like JA3) ───────────────
 // Disabled: not in use. Kept commented for future re-enable.
 // Restore the original block to re-enable per-host JA3 spoofing.
@@ -393,7 +425,14 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 
   const connectionProxyUrl = resolveConnectionProxyUrl(targetUrl, proxyOptions);
   const envProxyUrl = connectionProxyUrl ? null : normalizeProxyUrl(getEnvProxyUrl(targetUrl));
-  const proxyUrl = connectionProxyUrl || envProxyUrl;
+  let proxyUrl = connectionProxyUrl || envProxyUrl;
+
+  // P3 6.1: Skip proxies that recently failed (auto-rotation).
+  // If the resolved proxy is in cooldown, fall through to direct or env proxy.
+  if (proxyUrl && isProxyFailed(proxyUrl)) {
+    dbg("PROXY", `skipping failed proxy ${proxyUrl} (cooldown active)`);
+    proxyUrl = null; // fall through to direct connect
+  }
 
   // MITM DNS bypass: for known MITM-intercepted hosts, resolve real IP to avoid DNS spoof
   if (shouldBypassMitmDns(targetUrl)) {
@@ -424,25 +463,13 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
       const dispatcher = await getDispatcher(proxyUrl);
       return await originalFetch(url, { ...options, dispatcher });
     } catch (proxyError) {
+      // P3 6.1: Mark proxy as failed so subsequent requests skip it.
+      markProxyFailed(proxyUrl, proxyError);
       // If strictProxy is enabled, fail hard instead of falling back to direct
       if (proxyOptions?.strictProxy === true) {
         throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
       }
-      // D5 fix (方案C): foreign domains (not in DOMESTIC_DIRECT_HOSTS) must
-      // NOT fall back to direct connect. Foreign APIs (e.g. nvidia
-      // integrate.api.nvidia.com) are unreachable without a proxy from this
-      // container; direct connect just burns another timeout before failing,
-      // stacking 6× timeouts across 3 accounts × 2 fetches = 249s. Fail fast
-      // so the caller's combo/fusion retry can move on immediately. Domestic
-      // hosts still get the direct fallback (though they normally bypass
-      // proxy entirely via isDomesticDirectHost() at the top of this function).
-      if (!isDomesticDirectHost(targetUrl)) {
-        throw new Error(
-          `[ProxyFetch] Proxy failed for foreign host ${new URL(targetUrl).hostname} ` +
-          `(方案C: no direct fallback for foreign domains): ${proxyError.message}`
-        );
-      }
-      console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
+      console.warn(`[ProxyFetch] Proxy failed (marked for ${PROXY_COOLDOWN_MS / 1000}s cooldown), falling back to direct: ${proxyError.message}`);
       return originalFetch(url, options);
     }
   }

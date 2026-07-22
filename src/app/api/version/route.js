@@ -1,7 +1,7 @@
 import https from "https";
 import pkg from "../../../../package.json" with { type: "json" };
 
-const NPM_PACKAGE_NAME = "oninoneproxy";
+const NPM_PACKAGE_NAME = "OninOneProxy";
 
 // Fetch latest version from npm registry
 function fetchLatestVersion() {

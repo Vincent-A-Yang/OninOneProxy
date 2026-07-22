@@ -3,7 +3,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-const STORAGE_KEY = "oninoneproxy.cliToolEndpointPresets";
+const STORAGE_KEY = "OninOneProxy.cliToolEndpointPresets";
 
 function maskApiKey(apiKey) {
   if (!apiKey) return "No API key";

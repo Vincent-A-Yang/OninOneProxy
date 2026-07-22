@@ -168,6 +168,17 @@ const DEFAULT_PROVIDER_LIMITS = {
     ],
     quota: null,
   },
+  // 商汤 SenseNova (https://token.sensenova.cn/v1)
+  // 默认 1500次/5h = 300/h，但不同模型有不同限制
+  sensenova: {
+    rateWindows: [{ window: 'hour', count: 300, unit: 'request' }],
+    quota: null,
+    models: {
+      'deepseek-v4-flash': { rateWindows: [{ window: 'hour', count: 100, unit: 'request' }] },  // 500次/5h
+      'glm-5.2': { rateWindows: [{ window: 'hour', count: 30, unit: 'request' }] },             // 150次/5h
+      'glm-4-plus': { rateWindows: [{ window: 'hour', count: 30, unit: 'request' }] },
+    },
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -334,7 +345,7 @@ export async function getEffectiveLimits(provider, apiKey, model) {
     // 4. Fall back to built-in default limits (DEFAULT_PROVIDER_LIMITS).
     //    Fail-open: any lookup exception returns null, never blocking.
     try {
-      const defaultLimits = getDefaultLimits(provider);
+      const defaultLimits = getDefaultLimits(provider, model);
       if (defaultLimits) {
         return buildLimitsResult(defaultLimits);
       }
@@ -354,46 +365,38 @@ export async function getEffectiveLimits(provider, apiKey, model) {
 // ---------------------------------------------------------------------------
 
 /**
- * Universal fallback for unknown providers (D4).
- *
- * Applied when DEFAULT_PROVIDER_LIMITS has no matching entry. Provides safe
- * defaults (60 RPM) so unknown providers still get basic rate-limit protection
- * instead of unlimited access. TPM tracking is handled by the quota system.
- */
-const UNIVERSAL_FALLBACK_LIMITS = {
-  rateWindows: [{ window: 'minute', count: 60, unit: 'request' }],
-  quota: null,
-};
-
-/**
- * Look up built-in default limits for a provider.
+ * Look up built-in default limits for a provider, with optional per-model override.
  *
  * Matching is case-insensitive: 'NVIDIA' / 'nvidia' / 'Nvidia' all hit the
  * 'nvidia' entry. Returns a shallow copy so callers can mutate without
  * affecting the shared DEFAULT_PROVIDER_LIMITS table.
  *
- * D4: Unknown providers now receive UNIVERSAL_FALLBACK_LIMITS (60 RPM) instead
- * of null. Explicit entries with rateWindows=null (e.g. ollama) still return
- * their configured null — only truly unknown providers get the fallback.
+ * When `model` is provided and the provider entry has a `models` sub-object,
+ * per-model limits take priority over provider-level defaults.
  *
  * Fail-open: any exception returns null, never blocking the caller.
  *
  * @param {string} provider - Provider name (case-insensitive).
+ * @param {string} [model] - Model name for per-model override lookup.
  * @returns {{ rateWindows: Array|null, quota: Object|null }|null}
- *   The default limits, or null on invalid input / internal error.
  */
-export function getDefaultLimits(provider) {
+export function getDefaultLimits(provider, model) {
   try {
     if (!provider || typeof provider !== 'string') return null;
     const key = provider.toLowerCase();
     const entry = DEFAULT_PROVIDER_LIMITS[key];
-    if (entry) {
-      return {
-        rateWindows: entry.rateWindows,
-        quota: entry.quota,
-      };
+    if (!entry) return null;
+    // Per-model override: check if this model has specific limits.
+    if (model && entry.models) {
+      const modelKey = model.toLowerCase();
+      const modelEntry = entry.models[modelKey] || entry.models[model];
+      if (modelEntry) {
+        return {
+          rateWindows: modelEntry.rateWindows || entry.rateWindows,
+          quota: modelEntry.quota !== undefined ? modelEntry.quota : entry.quota,
+        };
+      }
     }
-    // D4: Unknown provider — return universal fallback (60 RPM) instead of null.
     return {
       rateWindows: UNIVERSAL_FALLBACK_LIMITS.rateWindows,
       quota: UNIVERSAL_FALLBACK_LIMITS.quota,

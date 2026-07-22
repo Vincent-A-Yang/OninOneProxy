@@ -18,6 +18,77 @@ import {
 import { analyzeError } from "./errorAnalyzer.js";
 import { getSettings } from "@/lib/localDb";
 
+// === Sticky Sessions + Context Handoff ===
+// Binds a conversation to a specific model for 30min to avoid mid-conversation
+// model switches that cause inconsistent behavior. When forced to switch,
+// injects a context handoff system message so the new model knows it's continuing.
+const STICKY_TTL_MS = 30 * 60 * 1000; // 30 minutes
+const stickySessions = new Map(); // sessionKey → { model, lastUsedAt }
+
+// Derive a session key from conversation context (first user message hash).
+// This identifies multi-turn conversations without requiring explicit session IDs.
+function deriveSessionKey(body) {
+  try {
+    const messages = body.messages || body.input || [];
+    if (!Array.isArray(messages) || messages.length === 0) return "";
+    // Use first user message content as conversation identifier
+    const firstUser = messages.find(m => m.role === "user");
+    if (!firstUser) return "";
+    const content = typeof firstUser.content === "string"
+      ? firstUser.content
+      : Array.isArray(firstUser.content)
+        ? firstUser.content.map(b => b.text || "").join("")
+        : "";
+    // Simple hash: first 100 chars + message count (good enough for session binding)
+    return `${content.slice(0, 100)}|${messages.length > 3 ? "multi" : "short"}`;
+  } catch { return ""; }
+}
+
+// Get the sticky model for a session, or null if expired/unbound.
+function getStickyModel(sessionKey) {
+  if (!sessionKey) return null;
+  const binding = stickySessions.get(sessionKey);
+  if (!binding) return null;
+  if (Date.now() - binding.lastUsedAt > STICKY_TTL_MS) {
+    stickySessions.delete(sessionKey);
+    return null;
+  }
+  return binding.model;
+}
+
+// Bind or refresh a session to a model.
+function bindStickySession(sessionKey, model) {
+  if (!sessionKey || !model) return;
+  stickySessions.set(sessionKey, { model, lastUsedAt: Date.now() });
+  // Lazy cleanup: evict expired entries when map grows
+  if (stickySessions.size > 500) {
+    const now = Date.now();
+    for (const [k, v] of stickySessions) {
+      if (now - v.lastUsedAt > STICKY_TTL_MS) stickySessions.delete(k);
+    }
+  }
+}
+
+// Context handoff message injected when model switch is forced.
+const CONTEXT_HANDOFF_MSG = "You are continuing a conversation previously handled by another model. The user's context, prior turns, and task progress are preserved below. Maintain consistency with the established approach, coding style, and task direction.";
+
+// Inject context handoff system message when model was switched.
+function injectContextHandoff(body, previousModel, newModel) {
+  if (!body || previousModel === newModel) return body;
+  const handoff = { role: "system", content: CONTEXT_HANDOFF_MSG };
+  if (Array.isArray(body.messages)) {
+    // Insert after existing system messages (or at start)
+    const sysEnd = body.messages.findIndex(m => m.role !== "system");
+    const insertAt = sysEnd >= 0 ? sysEnd : 0;
+    return { ...body, messages: [...body.messages.slice(0, insertAt), handoff, ...body.messages.slice(insertAt)] };
+  }
+  if (Array.isArray(body.input)) {
+    return { ...body, input: [handoff, ...body.input] };
+  }
+  return body;
+}
+// === End Sticky Sessions ===
+
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
 const HARD_CAPS = new Set(["vision", "pdf", "audioInput", "videoInput"]);
@@ -90,6 +161,47 @@ export function reorderByCapabilities(models, required) {
     .map((m, i) => ({ m, i, t: tierOf(m) }))
     .sort((a, b) => a.t - b.t || a.i - b.i)
     .map((x) => x.m);
+}
+
+// Pre-chunk TTFT guard: for streaming responses, verify the first SSE chunk
+// arrives within timeout. If not, the model is stalling — cascade to next.
+// Returns the original Response if first chunk arrives, or null on timeout.
+const TTFT_TIMEOUT_MS = 5000;
+async function awaitFirstChunk(response, timeoutMs = TTFT_TIMEOUT_MS) {
+  try {
+    if (!response.body) return response; // no body = non-streaming, pass through
+    const reader = response.body.getReader();
+    const timeout = new Promise((res) => setTimeout(() => res(null), timeoutMs));
+    const firstRead = reader.read();
+    const result = await Promise.race([firstRead, timeout]);
+    if (result === null) {
+      // Timeout — cancel the stream and signal failure
+      reader.cancel().catch(() => {});
+      return null;
+    }
+    // First chunk arrived — reconstruct a Response with first chunk + rest
+    const { value, done } = result;
+    const rest = new ReadableStream({
+      start(controller) {
+        if (!done && value) controller.enqueue(value);
+        const pump = () => {
+          reader.read().then(({ value: v, done: d }) => {
+            if (d) { controller.close(); return; }
+            controller.enqueue(v);
+            pump();
+          }).catch((e) => controller.error(e));
+        };
+        if (!done) pump(); else controller.close();
+      },
+    });
+    return new Response(rest, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch {
+    return response; // fail-open: return original on any error
+  }
 }
 
 // F1: Normalize panel models to {primary, backup} slots.
@@ -267,10 +379,20 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       rotatedModels = reordered;
     }
   }
-  
-  let lastError = null;
-  let earliestRetryAfter = null;
-  let lastStatus = null;
+
+  // Sticky session: prefer the model this conversation was previously bound to.
+  // This prevents mid-conversation model switches that cause inconsistent behavior.
+  const sessionKey = deriveSessionKey(body);
+  const stickyModel = getStickyModel(sessionKey);
+  let previousStickyModel = stickyModel;
+  if (stickyModel && rotatedModels.includes(stickyModel)) {
+    // Move sticky model to front (highest priority)
+    rotatedModels = [stickyModel, ...rotatedModels.filter(m => m !== stickyModel)];
+    log.info("COMBO", `sticky session → ${stickyModel}`);
+  } else if (stickyModel && !rotatedModels.includes(stickyModel)) {
+    // Sticky model no longer in combo — will inject context handoff on success
+    previousStickyModel = stickyModel;
+  }
 
   // F5: Register combo models under a shared logical pool so cooling sources
   // are skipped and usage is tracked across the whole combo. Fail-open.
@@ -282,128 +404,211 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     if (f5Enabled) f5LogicalId = getLogicalModelId("", comboName);
   } catch { /* fail-open */ }
 
-  for (let i = 0; i < rotatedModels.length; i++) {
-    const modelStr = rotatedModels[i];
-    log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
+  // Wait-for-recovery: when all models are cooling, wait up to MAX_WAIT_MS for
+  // the earliest one to recover, then retry. This prevents immediate 503 when
+  // providers are briefly rate-limited (e.g., 30s cooldown).
+  const COMBO_MAX_WAIT_MS = 65000;  // max time to wait for recovery
+  const COMBO_MAX_ROUNDS = 3;       // max retry rounds after waiting
+  let round = 0;
+  const trace = []; // request tracing: records each attempt for observability
+  const traceStart = Date.now();
 
-    try {
-      // F5: Register this combo model as a source for usage tracking.
-      // Bug #1 fix: Do NOT skip the provider based on combo-level cooldown.
-      // handleSingleModelChat internally handles Key-level cooldown with real
-      // apiKeys (chat.js line 736-741). Skipping here would bypass ALL Keys
-      // for one provider even if only one Key failed — breaking the first
-      // layer of failover (same-provider multi-Key switching).
-      let f5SourceId = "";
-      if (f5Enabled) {
-        try {
-          const slash = modelStr.indexOf("/");
-          const p = slash > 0 ? modelStr.slice(0, slash) : "";
-          const m = slash > 0 ? modelStr.slice(slash + 1) : modelStr;
-          f5SourceId = registerSource(f5LogicalId, { provider: p, apiKey: "", model: m });
-          if (f5SourceId && isCooling(f5SourceId)) {
-            log.info("COMBO", `Model ${modelStr} combo-level source cooling, but still trying (Key-level cooldown handled internally by handleSingleModelChat)`);
-          }
-        } catch { /* fail-open */ }
-      }
+  while (round <= COMBO_MAX_ROUNDS) {
+    let lastError = null;
+    let earliestRetryAfter = null;
+    let lastStatus = null;
+    let allCooling = true; // track if ALL models were skipped due to cooling
 
-      const result = await handleSingleModel(body, modelStr);
-
-      // F5: Record combo-level usage.
-      if (f5Enabled && f5SourceId) {
-        try {
-          recordUsage(f5SourceId, { success: result.ok });
-        } catch { /* fail-open */ }
-      }
-      
-      // Success (2xx) - return response
-      if (result.ok) {
-        log.info("COMBO", `Model ${modelStr} succeeded`);
-        return result;
-      }
-
-      // Extract error info from response
-      let errorText = result.statusText || "";
-      let retryAfter = null;
+    // P3.3: On retry rounds, sort models so non-cooling ones are tried first.
+    // This avoids iterating through still-cooling models before reaching recovered ones.
+    if (round > 0 && f5Enabled) {
       try {
-        const errorBody = await result.clone().json();
-        errorText = errorBody?.error?.message || errorBody?.error || errorBody?.message || errorText;
-        retryAfter = errorBody?.retryAfter || null;
-      } catch {
-        // Ignore JSON parse errors
-      }
-
-      // Track earliest retryAfter across all combo models
-      if (retryAfter && (!earliestRetryAfter || new Date(retryAfter) < new Date(earliestRetryAfter))) {
-        earliestRetryAfter = retryAfter;
-      }
-
-      // Normalize error text to string (Worker-safe)
-      if (typeof errorText !== "string") {
-        try { errorText = JSON.stringify(errorText); } catch { errorText = String(errorText); }
-      }
-
-      // D3.1: analyzeError replaces checkFallbackError (unified F5 error handling)
-      const slashIdx = modelStr.indexOf("/");
-      const providerHint = slashIdx > 0 ? modelStr.slice(0, slashIdx) : "";
-      const analyzeResult = analyzeError(result.status, errorText, result.headers || {}, providerHint);
-      const shouldFallback = !["fail"].includes(analyzeResult.strategy);
-      const cooldownMs = analyzeResult.coolDownSeconds * 1000;
-
-      // D3.4: Integrate quotaPool cooldown (fail-open, reuses f5SourceId from above)
-      if (f5Enabled && f5SourceId && analyzeResult.strategy === "cool_down_seconds" && analyzeResult.coolDownSeconds > 0) {
-        try {
-          coolDown(f5SourceId, analyzeResult.coolDownSeconds, analyzeResult.reason);
-          log.info("COMBO", `Model ${modelStr} cooled down ${analyzeResult.coolDownSeconds}s (${analyzeResult.reason})`);
-        } catch (e) {
-          log.warn("COMBO", `quotaPool coolDown failed: ${e?.message || String(e)}`);
-        }
-      }
-
-      if (!shouldFallback) {
-        log.warn("COMBO", `Model ${modelStr} failed (no fallback)`, { status: result.status });
-        return result;
-      }
-
-      // For transient errors (503/502/504), wait for cooldown before falling through
-      // so a briefly-overloaded provider gets a chance to recover rather than being
-      // skipped immediately (fixes: combo falls through on transient 503)
-      if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
-          (result.status === 503 || result.status === 502 || result.status === 504)) {
-        log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms before next`);
-        await new Promise(r => setTimeout(r, cooldownMs));
-      }
-
-      // Fallback to next model
-      lastError = errorText || String(result.status);
-      if (!lastStatus) lastStatus = result.status;
-      log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
-    } catch (error) {
-      // Catch unexpected exceptions to ensure fallback continues
-      lastError = error.message || String(error);
-      if (!lastStatus) lastStatus = 500;
-      log.warn("COMBO", `Model ${modelStr} threw error, trying next`, { error: lastError });
+        rotatedModels = rotatedModels.filter(m => {
+          const slash = m.indexOf("/");
+          const p = slash > 0 ? m.slice(0, slash) : "";
+          const mm = slash > 0 ? m.slice(slash + 1) : m;
+          const sid = registerSource(f5LogicalId, { provider: p, apiKey: "", model: mm });
+          return !sid || !isCooling(sid);
+        }).concat(rotatedModels.filter(m => {
+          const slash = m.indexOf("/");
+          const p = slash > 0 ? m.slice(0, slash) : "";
+          const mm = slash > 0 ? m.slice(slash + 1) : m;
+          const sid = registerSource(f5LogicalId, { provider: p, apiKey: "", model: mm });
+          return sid && isCooling(sid);
+        }));
+      } catch { /* fail-open: keep original order */ }
     }
+
+    for (let i = 0; i < rotatedModels.length; i++) {
+      const modelStr = rotatedModels[i];
+      const attemptStart = Date.now();
+      log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}${round > 0 ? ` (round ${round + 1})` : ""}`);
+
+      try {
+        // F5: Register this combo model as a source and skip if cooling.
+        let f5SourceId = "";
+        if (f5Enabled) {
+          try {
+            const slash = modelStr.indexOf("/");
+            const p = slash > 0 ? modelStr.slice(0, slash) : "";
+            const m = slash > 0 ? modelStr.slice(slash + 1) : modelStr;
+            f5SourceId = registerSource(f5LogicalId, { provider: p, apiKey: "", model: m });
+            if (f5SourceId && isCooling(f5SourceId)) {
+              log.info("COMBO", `Model ${modelStr} cooling in quota pool, skipping`);
+              continue;
+            }
+          } catch { /* fail-open */ }
+        }
+
+        allCooling = false; // at least one model was attempted
+
+        // Context handoff: inject system message when model switched from previous binding.
+        let requestBody = body;
+        if (previousStickyModel && previousStickyModel !== modelStr && i > 0) {
+          requestBody = injectContextHandoff(body, previousStickyModel, modelStr);
+          log.info("COMBO", `injecting context handoff for ${modelStr} (was ${previousStickyModel})`);
+        }
+
+        let result = await handleSingleModel(requestBody, modelStr);
+
+        // F5: Record combo-level usage.
+        if (f5Enabled && f5SourceId) {
+          try {
+            recordUsage(f5SourceId, { success: result.ok });
+          } catch { /* fail-open */ }
+        }
+
+        // Success (2xx) - quality check for non-streaming cascade
+        if (result.ok) {
+          // Pre-chunk TTFT guard for streaming: verify first chunk arrives in 5s.
+          // If the model is stalling (connected but not producing), cascade to next.
+          if (body.stream === true && rotatedModels.length > 1 && i < rotatedModels.length - 1) {
+            const guarded = await awaitFirstChunk(result);
+            if (!guarded) {
+              log.warn("COMBO", `Model ${modelStr} TTFT timeout (${TTFT_TIMEOUT_MS}ms), cascading`);
+              trace.push({ model: modelStr, status: "ttft_timeout", latencyMs: Date.now() - attemptStart, round });
+              lastError = `TTFT timeout from ${modelStr}`;
+              lastStatus = 408;
+              continue; // try next model
+            }
+            // Replace result with the guarded response (has first chunk buffered)
+            result = guarded;
+          }
+          // Cascade quality gate: for non-streaming responses, verify content is
+          // substantial before accepting. Empty/near-empty responses indicate the
+          // model failed silently — continue cascade to next model.
+          if (body.stream !== true && rotatedModels.length > 1 && i < rotatedModels.length - 1) {
+            try {
+              const cloned = result.clone();
+              const json = await cloned.json();
+              const text = extractPanelText(json);
+              // P4.1: Include reasoning_content in quality check (OmniRoute #3587).
+              // Models may return long reasoning but short visible text — that's valid.
+              const reasoning = json?.choices?.[0]?.message?.reasoning_content
+                || json?.choices?.[0]?.message?.reasoning || "";
+              const totalLen = (text?.trim()?.length || 0) + (typeof reasoning === "string" ? reasoning.trim().length : 0);
+              if (totalLen < 50) {
+                log.warn("COMBO", `Model ${modelStr} returned low-quality response (${totalLen} chars total), cascading`);
+                lastError = `low-quality response from ${modelStr}`;
+                lastStatus = result.status;
+                continue; // try next model
+              }
+            } catch { /* fail-open: if we can't parse, accept the response */ }
+          }
+          log.info("COMBO", `Model ${modelStr} succeeded`);
+          trace.push({ model: modelStr, status: "ok", latencyMs: Date.now() - attemptStart, round });
+          log.info("COMBO-TRACE", `total=${Date.now() - traceStart}ms attempts=${trace.length} chain=[${trace.map(t => `${t.model}:${t.status}(${t.latencyMs}ms)`).join(" → ")}]`);
+          // Sticky session: bind this conversation to the successful model.
+          bindStickySession(sessionKey, modelStr);
+          // Context handoff: if model changed from previous binding, inject handoff.
+          if (previousStickyModel && previousStickyModel !== modelStr) {
+            log.info("COMBO", `context handoff: ${previousStickyModel} → ${modelStr}`);
+          }
+          return result;
+        }
+
+        // Extract error info from response
+        let errorText = result.statusText || "";
+        let retryAfter = null;
+        try {
+          const errorBody = await result.clone().json();
+          errorText = errorBody?.error?.message || errorBody?.error || errorBody?.message || errorText;
+          retryAfter = errorBody?.retryAfter || null;
+        } catch {
+          // Ignore JSON parse errors
+        }
+
+        // Track earliest retryAfter across all combo models
+        if (retryAfter && (!earliestRetryAfter || new Date(retryAfter) < new Date(earliestRetryAfter))) {
+          earliestRetryAfter = retryAfter;
+        }
+
+        // Normalize error text to string (Worker-safe)
+        if (typeof errorText !== "string") {
+          try { errorText = JSON.stringify(errorText); } catch { errorText = String(errorText); }
+        }
+
+        // Check if should fallback to next model
+        const { shouldFallback, cooldownMs } = checkFallbackError(result.status, errorText);
+
+        if (!shouldFallback) {
+          log.warn("COMBO", `Model ${modelStr} failed (no fallback)`, { status: result.status });
+          return result;
+        }
+
+        // For transient errors (503/502/504), wait for cooldown before falling through
+        if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
+            (result.status === 503 || result.status === 502 || result.status === 504)) {
+          log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms before next`);
+          await new Promise(r => setTimeout(r, cooldownMs));
+        }
+
+        // Fallback to next model
+        lastError = errorText || String(result.status);
+        if (!lastStatus) lastStatus = result.status;
+        trace.push({ model: modelStr, status: result.status, latencyMs: Date.now() - attemptStart, round, error: lastError?.slice?.(0, 80) });
+        log.warn("COMBO", `Model ${modelStr} failed, trying next`, { status: result.status });
+      } catch (error) {
+        // Catch unexpected exceptions to ensure fallback continues
+        allCooling = false;
+        lastError = error.message || String(error);
+        if (!lastStatus) lastStatus = 500;
+        log.warn("COMBO", `Model ${modelStr} threw error, trying next`, { error: lastError });
+      }
+    }
+
+    // All models failed or were cooling.
+    // Wait-for-recovery: if all models were cooling (or failed with retryAfter),
+    // compute wait time and retry if within budget.
+    const waitMs = earliestRetryAfter
+      ? Math.max(0, new Date(earliestRetryAfter).getTime() - Date.now())
+      : allCooling ? 10000 : 0; // default 10s wait when all cooling without explicit retryAfter
+
+    if (round < COMBO_MAX_ROUNDS && waitMs > 0 && waitMs <= COMBO_MAX_WAIT_MS) {
+      round++;
+      log.info("COMBO", `All models failed (round ${round}/${COMBO_MAX_ROUNDS + 1}), retrying in ${Math.ceil(waitMs / 1000)}s`);
+      await new Promise(r => setTimeout(r, Math.min(waitMs + 1000, COMBO_MAX_WAIT_MS))); // +1s safety margin
+      continue; // retry the full loop
+    }
+
+    // Exhausted retries or wait too long — return error.
+    log.warn("COMBO-TRACE", `FAILED total=${Date.now() - traceStart}ms attempts=${trace.length} chain=[${trace.map(t => `${t.model}:${t.status}(${t.latencyMs}ms)`).join(" → ")}]`);
+    const allDisabled = lastError && lastError.toLowerCase().includes("no credentials");
+    const status = allDisabled ? 503 : (lastStatus || 503);
+    const msg = lastError || "All combo models unavailable";
+
+    if (earliestRetryAfter) {
+      const retryHuman = formatRetryAfter(earliestRetryAfter);
+      log.warn("COMBO", `All models failed | ${msg} (${retryHuman})`);
+      return unavailableResponse(status, msg, earliestRetryAfter, retryHuman);
+    }
+
+    log.warn("COMBO", `All models failed | ${msg}`);
+    return new Response(
+      JSON.stringify({ error: { message: msg } }),
+      { status, headers: { "Content-Type": "application/json" } }
+    );
   }
-
-  // All models failed
-  // Use 503 (Service Unavailable) rather than 406 (Not Acceptable) — 406 implies
-  // the request itself is invalid, but here the providers are simply unavailable
-  // or have no active credentials. 503 is more accurate and retryable by clients.
-  const allDisabled = lastError && lastError.toLowerCase().includes("no credentials");
-  const status = allDisabled ? 503 : (lastStatus || 503);
-  const msg = lastError || "All combo models unavailable";
-
-  if (earliestRetryAfter) {
-    const retryHuman = formatRetryAfter(earliestRetryAfter);
-    log.warn("COMBO", `All models failed | ${msg} (${retryHuman})`);
-    return unavailableResponse(status, msg, earliestRetryAfter, retryHuman);
-  }
-
-  log.warn("COMBO", `All models failed | ${msg}`);
-  return new Response(
-    JSON.stringify({ error: { message: msg } }),
-    { status, headers: { "Content-Type": "application/json" } }
-  );
 }
 
 /**
@@ -473,24 +678,36 @@ function appendUserTurn(body, text) {
  * Sources are anonymized ("Source N") so the judge weighs substance, not the
  * reputation of a model brand.
  */
-function buildJudgePrompt(answers) {
+function buildJudgePrompt(answers, isCodingTask) {
   const panel = answers
     .map((a, i) => `[Source ${i + 1}]\n${a.text}`)
     .join("\n\n");
 
-  return [
+  const parts = [
     `You are the JUDGE in a model-fusion panel. ${answers.length} expert models independently answered the user's most recent request. Their responses are below, anonymized by source.`,
     "",
     "Do NOT mention that multiple models were used, and do NOT refer to the sources. Produce ONE authoritative final answer addressed directly to the user.",
     "",
     "First, internally analyze the panel along these dimensions: consensus (points most sources agree on — treat as higher-confidence), contradictions (where they disagree — resolve with your own judgment), partial coverage, unique insights only one source surfaced, and blind spots every source missed. Then write the best possible final answer grounded in that analysis — more complete and correct than any single response, with no filler.",
+  ];
+
+  // MOA P1.3: Coding style unification — when the task involves code, enforce consistency.
+  if (isCodingTask) {
+    parts.push(
+      "",
+      "CODING RULES: All code in the final answer MUST use consistent naming conventions, indentation, and architectural patterns. When sources disagree on implementation approach, prefer the simplest correct solution. Do NOT mix coding styles from different sources."
+    );
+  }
+
+  parts.push(
     "",
     "=== PANEL RESPONSES ===",
     panel,
     "=== END PANEL RESPONSES ===",
     "",
-    "Now write the final answer to the user's original request.",
-  ].join("\n");
+    "Now write the final answer to the user's original request."
+  );
+  return parts.join("\n");
 }
 
 // Fusion tuning. Overridable per-combo via settings.comboStrategies[name].
@@ -635,7 +852,7 @@ function withTimeout(promise, ms) {
  * still preferring a full panel when everyone is fast. Bounded by a hard timeout.
  * Returns a sparse array aligned to `calls` (undefined = not yet / dropped).
  */
-function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs }) {
+function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs, onProgress }) {
   return new Promise((resolve) => {
     const out = new Array(calls.length);
     let settled = 0;
@@ -656,7 +873,10 @@ function collectPanel(calls, { minPanel, stragglerGraceMs, panelHardTimeoutMs })
         .catch((e) => { out[i] = { __error: e }; })
         .finally(() => {
           settled++;
-          if (out[i] && out[i].ok) ok++;
+          if (out[i] && out[i].ok) {
+            ok++;
+            if (onProgress) try { onProgress(ok, calls.length); } catch {}
+          }
           if (settled === calls.length) return finish();
           if (ok >= minPanel && !graceTimer) graceTimer = setTimeout(finish, stragglerGraceMs);
         });
@@ -849,7 +1069,7 @@ async function withFailover(slot, panelBody, handleSingleModel, cfg, log) {
  * @param {Object} [options.tuning] - Override FUSION_DEFAULTS (minPanel, grace, timeout)
  * @returns {Promise<Response>}
  */
-export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning }) {
+export async function handleFusionChat({ body, models, handleSingleModel, log, comboName, judgeModel, tuning, onProgress }) {
   // F1: Normalize panel slots to {primary, backup} form. Accepts both the legacy
   // string[] format and the new {primary, backup}[] format (backward compatible).
   let normalized = normalizePanel(models);
@@ -889,6 +1109,36 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   } else if (Array.isArray(panelBody.input)) {
     panelBody.input = flattenToolHistory(panelBody.input);
   }
+
+  // MOA P1.1: Auto-assign roles based on model capabilities.
+  // Each role gets a differentiated system prompt to maximize diversity of thought.
+  const ROLE_PROMPTS = {
+    executor: "You are the EXECUTOR in a multi-model panel. Focus on practical implementation, working code, and concrete actionable steps. Be precise and complete.",
+    advisor: "You are the ADVISOR in a multi-model panel. Focus on analysis, alternatives, trade-offs, risks, and strategic recommendations. Think broadly.",
+    reviewer: "You are the REVIEWER in a multi-model panel. Focus on correctness, edge cases, potential bugs, and quality improvements. Be critical.",
+  };
+  function assignRole(modelStr) {
+    try {
+      const slash = modelStr.indexOf("/");
+      const provider = slash > 0 ? modelStr.slice(0, slash) : "";
+      const model = slash > 0 ? modelStr.slice(slash + 1) : modelStr;
+      const caps = getCapabilitiesForModel(provider, model);
+      if (caps && caps.tools === false) return "advisor";
+      if (caps && caps.reasoning === true && caps.tools === true) return "executor";
+      return "reviewer";
+    } catch { return "reviewer"; }
+  }
+  // Build per-slot panel bodies with role-specific prompts.
+  const slotBodies = normalized.map((slot) => {
+    const role = assignRole(slot.primary);
+    const rolePrompt = ROLE_PROMPTS[role];
+    const rb = { ...panelBody };
+    if (Array.isArray(rb.messages)) {
+      rb.messages = [{ role: "system", content: rolePrompt }, ...rb.messages];
+    }
+    return { body: rb, role };
+  });
+  log.info("FUSION", `MOA roles: ${slotBodies.map((s, i) => `${normalized[i].primary}=${s.role}`).join(", ")}`);
 
   // F1: Each slot goes through withFailover (primary → backup on failure).
   // Slots without backup behave exactly like the original single-model call.
@@ -930,17 +1180,9 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   const calls = runWithConcurrency(
     normalized,
     cfg.maxPanelConcurrency,
-    (slot) => {
-      // Pass comboModels (slot primary strings) so getRolePrompt can resolve
-      // array-format roles via indexOf. Object-format roles ignore it.
-      const rolePrompt = getRolePrompt(roles, slot.primary, normalized.map(s => s.primary));
-      // Only clone when a role prompt exists; otherwise reuse the shared
-      // panelBody (identical to the original Fusion behavior).
-      const slotBody = rolePrompt ? buildPanelBodyWithRole(panelBody, rolePrompt) : panelBody;
-      return withFailover(slot, slotBody, handleSingleModel, cfg, log);
-    }
+    (slot, i) => withFailover(slot, slotBodies[i].body, handleSingleModel, cfg, log)
   );
-  const settled = await collectPanel(calls, { ...cfg, minPanel });
+  const settled = await collectPanel(calls, { ...cfg, minPanel, onProgress });
   log.info("FUSION", `fan-out collected in ${Date.now() - t0}ms`);
 
   // 2. Collect successful answers.
@@ -986,11 +1228,58 @@ export async function handleFusionChat({ body, models, handleSingleModel, log, c
   }
 
   // 4. Judge analyzes + writes one final answer (streams to client if requested).
-  // judgeRole: optional variant prefix (e.g. "judge-strict") prepended to the
-  // judge prompt to bias the synthesis. Empty/unknown → default behavior.
-  const judgePrefix = getJudgeRolePrefix(cfg.judgeRole);
-  const judgePrompt = judgePrefix ? judgePrefix + buildJudgePrompt(answers) : buildJudgePrompt(answers);
-  const judgeBody = appendUserTurn(body, judgePrompt);
-  log.info("FUSION", `Judging ${answers.length} answers with ${judge}${judgePrefix ? ` [role=${cfg.judgeRole}]` : ""}`);
-  return handleSingleModel(judgeBody, judge);
+  // MOA P1.3: Detect coding tasks for style unification.
+  const lastUserMsg = Array.isArray(body.messages) ? [...body.messages].reverse().find(m => m.role === "user") : null;
+  const userText = typeof lastUserMsg?.content === "string" ? lastUserMsg.content : "";
+  const isCodingTask = /```|code|function|class |import |def |const |var |let |bug|fix|implement|refactor|debug/i.test(userText);
+
+  // MOA P1.2: Layer 2 refinement — each model sees all Layer 1 outputs and refines.
+  // This leverages the "collaborativeness" effect: models improve when seeing others' work.
+  // Controlled by tuning.refineEnabled (default true). Skip if only 2 answers (marginal benefit).
+  let finalAnswers = answers;
+  if (cfg.refineEnabled !== false && answers.length >= 3) {
+    const refinePrompt = [
+      "Below are responses from other expert models to the same question. Review them, then refine your own answer to incorporate any valid insights you missed while maintaining your strengths. Output ONLY your refined answer.",
+      "",
+      "=== OTHER EXPERT RESPONSES ===",
+      answers.map((a, i) => `[Expert ${i + 1}]\n${a.text.slice(0, 2000)}`).join("\n\n"),
+      "=== END ===",
+    ].join("\n");
+    const refineCalls = answers.map((a) => {
+      const refineBody = { ...panelBody, messages: [...(panelBody.messages || []), { role: "user", content: refinePrompt }] };
+      return handleSingleModel(refineBody, a.model).then(async (res) => {
+        if (!res || !res.ok) return a; // fail-open: keep original
+        try {
+          const json = await res.json();
+          const text = extractPanelText(json);
+          return text && text.trim().length > 20 ? { model: a.model, text } : a;
+        } catch { return a; }
+      }).catch(() => a);
+    });
+    const refined = await Promise.all(refineCalls);
+    finalAnswers = refined;
+    log.info("FUSION", `MOA Layer 2 refinement complete (${refined.filter((r, i) => r !== answers[i]).length} improved)`);
+  }
+
+  const judgeBody = appendUserTurn(body, buildJudgePrompt(finalAnswers, isCodingTask));
+  log.info("FUSION", `Judging ${finalAnswers.length} answers with ${judge}${isCodingTask ? " [coding mode]" : ""}`);
+  const judgeResponse = await handleSingleModel(judgeBody, judge);
+
+  // P2 3.1: Add fusion metadata headers so clients can see what happened.
+  // This provides visibility into the fusion process without handler restructure.
+  try {
+    if (judgeResponse && typeof judgeResponse === "object" && judgeResponse.headers) {
+      const headers = new Headers(judgeResponse.headers);
+      headers.set("X-Fusion-Mode", "panel");
+      headers.set("X-Fusion-Panel-Count", String(answers.length));
+      headers.set("X-Fusion-Collection-Ms", String(Date.now() - t0));
+      headers.set("X-Fusion-Models", answers.map(a => a.model).join(", "));
+      return new Response(judgeResponse.body, {
+        status: judgeResponse.status,
+        statusText: judgeResponse.statusText,
+        headers,
+      });
+    }
+  } catch { /* fail-open: return original response if header injection fails */ }
+  return judgeResponse;
 }

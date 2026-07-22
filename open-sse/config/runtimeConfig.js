@@ -150,7 +150,7 @@ export const SKIP_PATTERNS = [
 // in place — no module reload required.
 //
 // Defaults are intentionally permissive: anti-ban is opt-in (enabled=false)
-// so existing 9Router behavior is fully preserved. Operators flip
+// so existing OninOneProxy behavior is fully preserved. Operators flip
 // `oauthAntiBanEnabled` to true via the Dashboard settings panel to engage
 // the concurrency cap + jitter + 429/403 monitor.
 //

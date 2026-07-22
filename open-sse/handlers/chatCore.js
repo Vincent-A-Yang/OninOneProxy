@@ -69,6 +69,24 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     }
   }
 
+  // Thinking depth auto-downgrade: clamp requested reasoning_effort to what the
+  // upstream model actually supports. Prevents errors when client requests "xhigh"
+  // but model only supports up to "high" (or "max" but model only has "medium").
+  if (body.reasoning_effort) {
+    try {
+      const { clampThinkingLevel } = await import("../providers/thinkingLevels.js");
+      const clamped = clampThinkingLevel(provider, model, body.reasoning_effort);
+      if (clamped === null) {
+        // Model has no reasoning support — strip reasoning_effort entirely
+        const { reasoning_effort, ...rest } = body;
+        body = rest;
+      } else if (clamped !== body.reasoning_effort) {
+        log?.debug?.("THINKING", `downgrade ${body.reasoning_effort} → ${clamped} for ${provider}/${model}`);
+        body = { ...body, reasoning_effort: clamped };
+      }
+    } catch { /* fail-open: keep original reasoning_effort */ }
+  }
+
   const clientRequestedStreaming = body.stream === true || sourceFormat === FORMATS.ANTIGRAVITY || sourceFormat === FORMATS.GEMINI || sourceFormat === FORMATS.GEMINI_CLI;
   const providerRequiresStreaming = PROVIDERS[provider]?.forceStream === true;
   let stream = providerRequiresStreaming ? true : (body.stream !== false);

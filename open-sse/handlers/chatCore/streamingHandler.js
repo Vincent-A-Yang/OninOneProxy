@@ -82,7 +82,11 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 
   // Responses passthrough: synthesize response.failed + [DONE] if the stream aborts/stalls before a terminal event
   const isResponsesPassthrough = sourceFormat === FORMATS.OPENAI_RESPONSES && targetFormat === FORMATS.OPENAI_RESPONSES;
-  const onAbortTerminal = isResponsesPassthrough ? buildAbortedResponsesTerminalBytes : null;
+  // P3.4: Always provide an abort terminal so clients receive a proper stream end.
+  // OpenAI format: "data: [DONE]\n\n"; Responses format: response.failed + [DONE].
+  const onAbortTerminal = isResponsesPassthrough
+    ? buildAbortedResponsesTerminalBytes
+    : () => new TextEncoder().encode("data: [DONE]\n\n");
   const stallTimeoutMs = PROVIDERS[provider]?.stallTimeoutMs || STREAM_STALL_TIMEOUT_MS;
   const transformedBody = pipeWithDisconnect(providerResponse, transformStream, streamController, onAbortTerminal, stallTimeoutMs, STREAM_REASONING_STALL_TIMEOUT_MS, isReasoningModel);
 

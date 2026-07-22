@@ -368,14 +368,14 @@ export function validateResponse(response, options = {}) {
 //   - Fail-open: any internal error returns zero-valued stats and never
 //     throws. The Dashboard treats this the same as "no data".
 //   - Stats are process-local in-memory (just like quotaPool.js), so they
-//     reflect the currently running 9Router instance only. A restart
+//     reflect the currently running OninOneProxy instance only. A restart
 //     zeroes the counters — by design, the task spec calls for "简单实现：
 //     内存计数器，重启清零".
 
 const STATS_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h rolling window
 // Hard cap per bucket — protects against a runaway producer that pushes
 // faster than the lazy sweep can trim. 10k entries is well above any
-// realistic 24h volume for a single 9Router instance.
+// realistic 24h volume for a single OninOneProxy instance.
 const STATS_BUCKET_CAP = 10000;
 
 if (!global.__responseValidatorStats) {

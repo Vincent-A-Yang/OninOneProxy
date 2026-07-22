@@ -96,11 +96,11 @@ import p93 from "./xai.js";
 import p94 from "./xiaomi-mimo.js";
 import p95 from "./xiaomi-tokenplan.js";
 import p96 from "./youcom.js";
-import p97 from "./kilo.js";
-import p98 from "./pollinations.js";
-import p99 from "./ovh.js";
-import p100 from "./aihorde.js";
-import p101 from "./traecn.js";
+import p97 from "./pollinations.js";
+import p98 from "./llm7.js";
+import p99 from "./ovh-ai.js";
+import p100 from "./trae.js";
+import p101 from "./trae-cn.js";
 
 export default [
   p0,

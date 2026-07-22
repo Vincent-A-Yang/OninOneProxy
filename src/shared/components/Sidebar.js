@@ -350,10 +350,10 @@ export default function Sidebar({ onClose }) {
         isOpen={showUpdateModal}
         onClose={() => setShowUpdateModal(false)}
         onConfirm={handleUpdate}
-        title={translate("Update OninOneProxy")}
-        message={translate("Show install command for v{version}? You can copy it and shutdown to install manually.", { version: updateInfo?.latestVersion || "" })}
-        confirmText={translate("Show Command")}
-        cancelText={translate("Cancel")}
+        title="Update OninOneProxy"
+        message={`Show install command for v${updateInfo?.latestVersion || ""}? You can copy it and shutdown to install manually.`}
+        confirmText="Show Command"
+        cancelText="Cancel"
         variant="primary"
       />
 
@@ -401,7 +401,7 @@ function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdow
           <span className="material-symbols-outlined text-[24px]">content_copy</span>
         </div>
         <div>
-          <h2 className="text-lg font-semibold">{latestVersion ? translate("Update OninOneProxy to v{version}", { version: latestVersion }) : translate("Update OninOneProxy")}</h2>
+          <h2 className="text-lg font-semibold">Update OninOneProxy{latestVersion ? ` to v${latestVersion}` : ""}</h2>
           <p className="text-xs text-white/60">
             {isDisconnected
               ? translate("Server stopped. Paste the command into a terminal to install.")
@@ -418,9 +418,9 @@ function ManualUpdatePanel({ latestVersion, installCmd, copied, onCopyAndShutdow
       </div>
 
       <ol className="text-xs text-white/70 space-y-1 list-decimal list-inside mb-4">
-        <li>{translate("Click Copy & Shutdown below.")}</li>
-        <li>{translate("Paste the command into your terminal and press Enter.")}</li>
-        <li>{translate("Run oninoneproxy again after install.")}</li>
+        <li>Click <strong>Copy & Shutdown</strong> below.</li>
+        <li>Paste the command into your terminal and press Enter.</li>
+        <li>Run <code className="px-1 rounded bg-white/10 text-green-400">OninOneProxy</code> again after install.</li>
       </ol>
 
       {isDisconnected ? (

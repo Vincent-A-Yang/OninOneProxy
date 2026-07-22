@@ -414,6 +414,9 @@ function get429CooldownFromProviderLimits(provider) {
  * @param {string}  bodyText     - Response body as text (already read).
  * @param {object}  [headers]    - Response headers (case-insensitive lookup).
  * @param {string}  [providerHint] - Provider name / alias (e.g. "nvidia", "openai", "anthropic", "gemini", "azure").
+ * @param {object}  [rateWindowHint] - Optional rate window info from providerLimits: { windowSeconds, limit }.
+ *                                     When Retry-After header is absent and error is rate_limit,
+ *                                     uses windowSeconds as cooldown (capped at 30min).
  * @returns {{
  *   category: string,
  *   strategy: string,
@@ -422,7 +425,7 @@ function get429CooldownFromProviderLimits(provider) {
  *   reason: string,
  * }}
  */
-export function analyzeError(statusCode, bodyText, headers = {}, providerHint = "") {
+export function analyzeError(statusCode, bodyText, headers = {}, providerHint = "", rateWindowHint = null) {
   try {
     const status = Number(statusCode) || 0;
     const bodyStr =
@@ -446,8 +449,16 @@ export function analyzeError(statusCode, bodyText, headers = {}, providerHint = 
         if (p.text && lower.includes(p.text.toLowerCase())) {
           // Honor explicit Retry-After header when present (it overrides the pattern default).
           const retryAfter = pickRetryAfter(headers);
-          const coolDownSeconds =
+          let coolDownSeconds =
             retryAfter > 0 ? retryAfter : p.coolDownSeconds || 0;
+          // Smart cooldown: when no Retry-After and this is a rate_limit,
+          // use the provider's configured rate window as cooldown basis.
+          if (retryAfter <= 0 && p.category === "rate_limit" && rateWindowHint && rateWindowHint.windowSeconds > 0) {
+            const windowCooldown = Math.min(rateWindowHint.windowSeconds, 1800); // cap at 30min
+            if (windowCooldown > coolDownSeconds) {
+              coolDownSeconds = windowCooldown;
+            }
+          }
           return finalize(p, coolDownSeconds);
         }
       }
@@ -530,12 +541,12 @@ export function analyzeError(statusCode, bodyText, headers = {}, providerHint = 
     if (fallback) {
       const retryAfter = pickRetryAfter(headers);
       let coolDownSeconds = retryAfter > 0 ? retryAfter : fallback.coolDownSeconds || 0;
-      // 429: try to derive a more accurate cooldown from providerLimits
-      // config (e.g. five_hour window → 18000s + SAFETY_MARGIN_SECONDS).
-      // Only when no Retry-After header was present (Retry-After always wins).
-      if (status === 429 && retryAfter === 0) {
-        const limitsCooldown = get429CooldownFromProviderLimits(provider);
-        if (limitsCooldown > 0) coolDownSeconds = limitsCooldown;
+      // Smart cooldown for generic 429: use provider rate window when available.
+      if (retryAfter <= 0 && fallback.category === "rate_limit" && rateWindowHint && rateWindowHint.windowSeconds > 0) {
+        const windowCooldown = Math.min(rateWindowHint.windowSeconds, 1800);
+        if (windowCooldown > coolDownSeconds) {
+          coolDownSeconds = windowCooldown;
+        }
       }
       return finalize(fallback, coolDownSeconds);
     }

@@ -12,8 +12,8 @@ function killMitmByPidFile() {
   try {
     const mitmPidFile = path.join(
       process.platform === "win32"
-        ? path.join(process.env.APPDATA || "", "oninoneproxy")
-        : path.join(os.homedir(), ".oninoneproxy"),
+        ? path.join(process.env.APPDATA || "", "OninOneProxy")
+        : path.join(os.homedir(), ".OninOneProxy"),
       "mitm",
       ".mitm.pid"
     );
@@ -37,7 +37,7 @@ function killMitmByPidFile() {
   } catch { /* best effort */ }
 }
 
-// Collect PIDs of all oninoneproxy-related processes (excluding current)
+// Collect PIDs of all OninOneProxy-related processes (excluding current)
 function collectAppPids() {
   const pids = [];
   const platform = process.platform;
@@ -49,8 +49,8 @@ function collectAppPids() {
       const lines = output.split("\n").slice(1).filter(l => l.trim());
       lines.forEach(line => {
         const lower = line.toLowerCase();
-        // Match anything running from oninoneproxy install dir or wrapper cli.js
-        const isAppProcess = lower.includes("oninoneproxy") ||
+        // Match anything running from OninOneProxy install dir or wrapper cli.js
+        const isAppProcess = lower.includes("OninOneProxy") ||
           lower.includes("next-server") ||
           lower.includes("\\bin\\app\\") ||
           lower.includes("/bin/app/") ||
@@ -77,7 +77,7 @@ function collectAppPids() {
     try {
       const output = execSync("ps aux 2>/dev/null", { encoding: "utf8", timeout: KILL_TIMEOUT_MS });
       output.split("\n").forEach(line => {
-        const isAppProcess = line.includes("oninoneproxy") ||
+        const isAppProcess = line.includes("OninOneProxy") ||
           line.includes("next-server") ||
           line.includes("cloudflared") ||
           line.includes("/bin/app/") ||
@@ -99,9 +99,9 @@ function collectAppPids() {
 function getDataDir() {
   if (process.env.DATA_DIR) return process.env.DATA_DIR;
   if (process.platform === "win32") {
-    return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "oninoneproxy");
+    return path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "OninOneProxy");
   }
-  return path.join(os.homedir(), ".oninoneproxy");
+  return path.join(os.homedir(), ".OninOneProxy");
 }
 
 function resolveBundledUpdaterPath() {
@@ -159,7 +159,7 @@ export async function killAppProcesses() {
 // Resolve npx/oninoneproxy binary to relaunch after update (cross-platform)
 function resolveRelaunchCommand() {
   const isWin = process.platform === "win32";
-  // Prefer `npx oninoneproxy` — works regardless of global bin path changes after npm i -g
+  // Prefer `npx OninOneProxy` — works regardless of global bin path changes after npm i -g
   const npx = isWin ? "npx.cmd" : "npx";
   return { cmd: npx, args: [UPDATER_CONFIG.npmPackageName] };
 }

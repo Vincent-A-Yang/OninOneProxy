@@ -50,7 +50,7 @@ http.createServer = (...args) => {
 //     configured interval only affects *optimization frequency*, not timer
 //     existence — settings changes take effect on the next natural tick.
 const MS_PER_HOUR = 3600 * 1000;
-const SMART_ROUTER_TICK_MS = 6 * MS_PER_HOUR;
+const SMART_ROUTER_TICK_MS = 1 * MS_PER_HOUR;
 
 async function runSmartRouterTick() {
   try {
@@ -113,6 +113,29 @@ async function runSmartRouterTick() {
 // The first actual fire is one full interval later (cold-start safe).
 const smartRouterTimer = setInterval(runSmartRouterTick, SMART_ROUTER_TICK_MS);
 if (typeof smartRouterTimer.unref === "function") smartRouterTimer.unref();
+
+// === F7: Active Health Probe Service ===
+// Periodically probes registered sources to detect issues before user requests.
+// Fail-open: any error is swallowed. Timer is unref'd so it doesn't block shutdown.
+import("./open-sse/services/healthProbe.js")
+  .then(({ startHealthProbes }) => {
+    startHealthProbes({
+      info: (tag, msg) => console.log(`[${tag}] ${msg}`),
+      warn: (tag, msg) => console.warn(`[${tag}] ${msg}`),
+    });
+  })
+  .catch(() => { /* module unavailable — skip silently */ });
+
+// === F8: Model Auto-Sync Service ===
+// Periodically fetches latest model lists from providers with modelsFetcher config.
+import("./open-sse/services/modelSync.js")
+  .then(({ startModelSync }) => {
+    startModelSync({
+      info: (tag, msg) => console.log(`[${tag}] ${msg}`),
+      warn: (tag, msg) => console.warn(`[${tag}] ${msg}`),
+    });
+  })
+  .catch(() => { /* module unavailable — skip silently */ });
 
 // === Stage 11.2.2: Periodic data retention cleanup (opt-in) ===
 //

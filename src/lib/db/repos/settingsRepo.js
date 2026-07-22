@@ -74,24 +74,18 @@ const DEFAULT_SETTINGS = {
   // | "cost" | "successRate". "score" is the composite metric recommended
   // for general use.
   smartRouterTargetMetric: "score",
-  // F5: Unified quota / rate pool + intelligent error handling. Defaults ON
-  // so operators get aggregated quota/rate tracking and smart error handling
-  // out of the box. When quotaPoolEnabled is true, chat.js consults the
-  // quota pool to select a physical source (provider/key/model) for the
-  // logical model. When smartErrorHandlingEnabled is true, upstream errors
-  // are run through errorAnalyzer to drive cool_down / switch_key /
-  // switch_model decisions.
-  quotaPoolEnabled: true,
-  // D2: Protection-class switch — defaults ON. Smart error handling (F5)
-  // analyzes upstream errors and drives cool_down / switch_key / switch_model
-  // decisions. This is a core protection capability of OninOneProxy and must
-  // not require manual opt-in. The switch is retained only for emergency
-  // disable by operators; default behavior is "always on".
-  smartErrorHandlingEnabled: true,
-  // F6: Per-provider limits enforcement. Defaults ON so request counts /
-  // token usage are tracked per provider and capped according to configured
-  // limits.
-  providerLimitsEnabled: true,
+  // F5: Unified quota / rate pool + intelligent error handling. Defaults off
+  // so existing OninOneProxy routing (per-connection fallback) is preserved. When
+  // quotaPoolEnabled is true, chat.js consults the quota pool to select a
+  // physical source (provider/key/model) for the logical model. When
+  // smartErrorHandlingEnabled is true, upstream errors are run through
+  // errorAnalyzer to drive cool_down / switch_key / switch_model decisions.
+  quotaPoolEnabled: false,
+  smartErrorHandlingEnabled: false,
+  // F6: Per-provider limits enforcement. Defaults off so existing OninOneProxy
+  // behavior is preserved. When enabled, request counts / token usage are
+  // tracked per provider and capped according to configured limits.
+  providerLimitsEnabled: false,
   // F4: Custom fake-response patterns for responseValidator.
   // Stored as JSON array (see loadCustomPatterns in responseValidator.js):
   //   [{ id, pattern, caseInsensitive?, isRegex?, severity?, type? }]
@@ -119,13 +113,12 @@ const DEFAULT_SETTINGS = {
   // and max-file), not inside Node.js. This flag is exposed so the
   // Dashboard can show the configured state and so future code can read
   // it to decide whether to emit verbose per-request logs.
-  logRotationEnabled: true, // @deprecated 2026-07-13: defined in DEFAULT_SETTINGS but never read anywhere in 9router-src (log rotation is enforced at Docker json-file driver level). Kept for future Dashboard display; safe to remove if unused.
-  // Stage 5.4: OAuth anti-ban runtime config.
-  // D2: Protection-class switch — defaults ON. OAuth anti-ban (per-account
-  // concurrency cap, refresh jitter, 429/403 monitor, header spoof) is a
-  // core protection capability that helps avoid triggering upstream rate
-  // limits and account bans. This must not require manual opt-in. The
-  // switch is retained only for emergency disable by operators.
+  logRotationEnabled: true,
+  // Stage 5.4: OAuth anti-ban runtime config. Defaults preserve existing
+  // OninOneProxy behavior (master switch off → every guard short-circuits to
+  // permissive). Operators opt in via Dashboard settings panel to engage
+  // the per-account concurrency cap, refresh jitter, 429/403 monitor, and
+  // header spoof configurability. See `docs/oauth-anti-ban-guide.md` §3.4.
   //
   // oauthAntiBanEnabled toggles OAUTH_ANTI_BAN_CONFIG.enabled via the
   // applyRuntimeConfigOverride hook in custom-server.js. When false, all

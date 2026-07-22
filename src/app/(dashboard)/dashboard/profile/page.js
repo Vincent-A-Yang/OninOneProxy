@@ -594,7 +594,7 @@ export default function ProfilePage() {
       const anchor = document.createElement("a");
       const stamp = new Date().toISOString().replace(/[.:]/g, "-");
       anchor.href = url;
-      anchor.download = `oninoneproxy-backup-${stamp}.json`;
+      anchor.download = `OninOneProxy-backup-${stamp}.json`;
       document.body.appendChild(anchor);
       anchor.click();
       document.body.removeChild(anchor);
@@ -717,8 +717,8 @@ export default function ProfilePage() {
           <div className="flex flex-col gap-3 pt-4 border-t border-border">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between p-3 rounded-lg bg-bg border border-border gap-2">
               <div>
-                <p className="font-medium text-sm sm:text-base">{translate("Database Location")}</p>
-                <p className="text-xs sm:text-sm text-text-muted font-mono break-all">~/.oninoneproxy/db/data.sqlite</p>
+                <p className="font-medium text-sm sm:text-base">Database Location</p>
+                <p className="text-xs sm:text-sm text-text-muted font-mono break-all">~/.OninOneProxy/db/data.sqlite</p>
               </div>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
@@ -938,7 +938,7 @@ export default function ProfilePage() {
               <div className="flex flex-col gap-2">
                 <label className="font-medium text-sm sm:text-base">{translate("Client ID")}</label>
                 <Input
-                  placeholder="oninoneproxy-dashboard"
+                  placeholder="OninOneProxy-dashboard"
                   value={oidcForm.oidcClientId}
                   onChange={(e) => updateOidcForm("oidcClientId", e.target.value)}
                   disabled={loading || oidcLoading}

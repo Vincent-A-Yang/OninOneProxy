@@ -57,6 +57,18 @@ const COOLDOWN = {
  *   - backoff: true = use exponential backoff (rate limit)
  */
 export const ERROR_RULES = [
+  // --- Network errors (short cooldown, retry same provider with different route) ---
+  { text: "fetch connect timeout",    cooldownMs: 5000, network: true },
+  { text: "econnreset",               cooldownMs: 3000, network: true },
+  { text: "socket hang up",           cooldownMs: 3000, network: true },
+  { text: "econnrefused",             cooldownMs: 5000, network: true },
+  { text: "etimedout",                cooldownMs: 5000, network: true },
+  { text: "enotfound",                cooldownMs: 60000, network: true },  // DNS failure → longer cooldown
+  { text: "network socket disconnected", cooldownMs: 3000, network: true },
+
+  // --- Client errors (no fallback — request itself is the problem) ---
+  { text: "tool_use_failed",          noFallback: true },  // P4.2: Groq-style tool error (FreeLLMAPI #264)
+
   // --- Text-based rules (checked first, order = priority) ---
   { text: "no credentials",           cooldownMs: COOLDOWN.long },
   { text: "request not allowed",      cooldownMs: COOLDOWN.short },

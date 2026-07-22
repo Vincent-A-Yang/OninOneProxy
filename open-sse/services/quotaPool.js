@@ -22,7 +22,7 @@
  *
  * Fail-open contract:
  *   Any internal exception is swallowed and surfaces as a null / empty result
- *   so the caller degrades to the original 9Router routing behavior. This
+ *   so the caller degrades to the original OninOneProxy routing behavior. This
  *   module NEVER throws.
  *
  * Design notes:
@@ -709,6 +709,19 @@ export function getSourceCooldownReason(sourceId) {
 // ---------------------------------------------------------------------------
 
 /**
+ * List ALL registered sources across all logical models.
+ * Used by health probe service to iterate over every source.
+ * @returns {SourceState[]}
+ */
+export function getAllSources() {
+  try {
+    return [...sourcesById.values()];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * List available (non-cooling) sources for a logical model.
  * @param {string} logicalId
  * @returns {SourceState[]}
@@ -722,6 +735,10 @@ export function getAvailableSources(logicalId) {
     for (const id of set) {
       const state = sourcesById.get(id);
       if (!state) continue;
+      // Skip combo-level tracking entries (registered with empty apiKey for
+      // cooling tracking only). These should never be returned by selectSource
+      // because they can't be matched to real credentials in chat.js.
+      if (!state.apiKey) continue;
       shiftBuckets(state, ts);
       if (!isCoolingNow(state, ts)) out.push(state);
     }
@@ -888,13 +905,15 @@ export function selectSource(logicalId) {
     }
     if (totalWeight <= 0 || weighted.length === 0) return null;
 
-    // Pick the source with the largest weight (deterministic greedy). This is
-    // simpler than weighted random and gives the same average behavior at the
-    // limit (you'd route most load to the most-capable source anyway). For
-    // genuine random spreading, callers can wrap selectSource.
+    // Weighted random selection: distribute requests proportionally across all
+    // available sources based on remaining capacity. This achieves true rate
+    // stacking (e.g., 3 accounts x 40 RPM = 120 RPM effective) by spreading
+    // load evenly rather than concentrating on one source until saturated.
+    let r = Math.random() * totalWeight;
     let best = weighted[0];
-    for (let i = 1; i < weighted.length; i++) {
-      if (weighted[i].w > best.w) best = weighted[i];
+    for (let i = 0; i < weighted.length; i++) {
+      r -= weighted[i].w;
+      if (r <= 0) { best = weighted[i]; break; }
     }
     const s = best.state;
     return { sourceId: s.sourceId, provider: s.provider, apiKey: s.apiKey, model: s.model };

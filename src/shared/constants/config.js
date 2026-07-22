@@ -2,7 +2,7 @@ import pkg from "../../../package.json" with { type: "json" };
 
 // App configuration
 export const APP_CONFIG = {
-  name: "OninOneProxy",
+  name: "OninOneProxy Proxy",
   description: "AI Infrastructure Management",
   version: pkg.version,
 };
@@ -15,9 +15,9 @@ export const GITHUB_CONFIG = {
 
 // Updater configuration
 export const UPDATER_CONFIG = {
-  npmPackageName: "oninoneproxy",
-  installCmd: "npm i -g oninoneproxy",
-  installCmdLatest: "npm i -g oninoneproxy@latest --prefer-online",
+  npmPackageName: "OninOneProxy",
+  installCmd: "npm i -g OninOneProxy",
+  installCmdLatest: "npm i -g OninOneProxy@latest --prefer-online",
   shutdownCountdownSec: 3,
   exitDelayMs: 500,
   statusPort: 20129,

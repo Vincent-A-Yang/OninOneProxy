@@ -794,14 +794,21 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // C1: Weighted selection — if selectSource recommended a source and the
     // current credentials don't match, skip this account and try the next.
     // Fail-open is handled above (all-excluded case); here we just skip.
+    // Soft preference: only skip up to (totalAccounts - 1) accounts. If we've
+    // already skipped too many, accept whatever is available rather than
+    // excluding everything and triggering a unnecessary fallback.
     if (c1PreferredSource) {
       const credApiKey = credentials.apiKey || "";
       if (credApiKey && credApiKey !== c1PreferredSource.apiKey) {
-        log.info("QUOTA", `加权选择未命中, 跳过 ${credentials.connectionName}`);
-        c1WeightedExcludes.add(credentials.connectionId);
-        continue;
-      }
-      if (credApiKey && credApiKey === c1PreferredSource.apiKey) {
+        // Only skip if we haven't exhausted too many accounts already
+        if (c1WeightedExcludes.size < 2) {
+          log.info("QUOTA", `加权选择未命中, 跳过 ${credentials.connectionName}`);
+          c1WeightedExcludes.add(credentials.connectionId);
+          continue;
+        }
+        // Too many skips — accept this account (soft preference, not hard filter)
+        log.info("QUOTA", `加权选择软回退, 接受 ${credentials.connectionName}`);
+      } else if (credApiKey && credApiKey === c1PreferredSource.apiKey) {
         log.info("QUOTA", `加权选择命中 ${credentials.connectionName}`);
       }
     }
@@ -1113,7 +1120,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     if (f5Enabled && f5ErrEnabled && f5SourceId) {
       try {
         const errText = result.error || result.response?.statusText || "";
-        const analysis = analyzeError(result.status, errText, result.headers, provider);
+        // Pass rate window hint so errorAnalyzer can match cooldown to provider's actual reset window.
+        let rateWindowHint = null;
+        if (providerLimitsConfig && Array.isArray(providerLimitsConfig.rateWindows) && providerLimitsConfig.rateWindows.length > 0) {
+          const rw = providerLimitsConfig.rateWindows[0];
+          const WINDOW_SEC = { second: 1, minute: 60, hour: 3600, day: 86400 };
+          rateWindowHint = { windowSeconds: WINDOW_SEC[rw.window] || 60, limit: rw.count || 0 };
+        }
+        const analysis = analyzeError(result.status, errText, result.headers, provider, rateWindowHint);
         if (analysis.coolDownSeconds > 0 &&
             (analysis.strategy === "cool_down_seconds" || analysis.strategy === "retry")) {
           // F6 / F3 coordination: skip cooldown when this source was already

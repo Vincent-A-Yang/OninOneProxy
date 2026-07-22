@@ -193,7 +193,7 @@ export async function stepSepCmaEs(mean, diagC, sigma, fitness, params = DEFAULT
 /**
  * Extract the average latency (ms) from a list of usageHistory rows.
  * Latency is stored inside the `meta` JSON column under `latencyMs`
- * (future-proofing — 9Router does not currently record it, so the default
+ * (future-proofing — OninOneProxy does not currently record it, so the default
  * is returned when meta is empty).
  * @param {Array} rows
  * @returns {number}

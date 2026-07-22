@@ -69,7 +69,7 @@ export async function POST(request) {
       headers,
       body: JSON.stringify({
         slug: projectName,
-        labels: { "custom.kind": "oninoneproxy-relay" },
+        labels: { "custom.kind": "OninOneProxy-relay" },
         config: {
           install: "deno install",
           runtime: {

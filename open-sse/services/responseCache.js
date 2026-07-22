@@ -64,10 +64,28 @@ function stableStringify(value) {
  * Strips volatile fields that should not bust the cache:
  *   - stream (response shape, not request semantics)
  *   - user (per-request caller id, intentionally per-user)
+ *   - base64 image data (same image, different encoding → same semantic request)
  */
 export function normalizeForHash(body) {
   if (!body || typeof body !== "object") return body;
   const { stream, user, ...rest } = body;
+  // Strip base64 data from image_url content parts to stabilize hash.
+  // Two requests with the same image (different base64 padding/encoding) should hit cache.
+  if (Array.isArray(rest.messages)) {
+    rest.messages = rest.messages.map(msg => {
+      if (!msg || !Array.isArray(msg.content)) return msg;
+      return {
+        ...msg,
+        content: msg.content.map(part => {
+          if (part && part.type === "image_url" && part.image_url?.url?.startsWith("data:")) {
+            // Replace base64 payload with a stable hash of its length (semantic fingerprint)
+            return { ...part, image_url: { url: `data:stripped:${part.image_url.url.length}` } };
+          }
+          return part;
+        }),
+      };
+    });
+  }
   return rest;
 }
 

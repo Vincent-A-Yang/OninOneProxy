@@ -346,7 +346,7 @@ amp --model "{{model}}"
       },
       {
         type: "info",
-        text: "Configure oninoneproxy as an OpenAI-compatible provider to route all jcode requests through oninoneproxy's optimization layer."
+        text: "Configure OninOneProxy as an OpenAI-compatible provider to route all jcode requests through OninOneProxy's optimization layer."
       },
       {
         type: "warning",

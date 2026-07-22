@@ -54,20 +54,14 @@ export const KIMI_CODING_BASE_URL = "https://api.kimi.com/coding/v1/messages";
 export const OPENAI_COMPAT_BASE = "https://api.openai.com/v1";
 export const ANTHROPIC_COMPAT_BASE = "https://api.anthropic.com/v1";
 
-// Antigravity OAuth client credentials (public CLI client — duplicated in usage.js + src/lib/oauth)
-// Source: lbjlaq/Antigravity-Manager (src-tauri/src/modules/oauth.rs) — Google "Installed Application" type
-// Real credentials injected via process.env in .env (not committed). Placeholders below are for
-// public-release safety — OAuth login will not work without env vars set.
+// Antigravity OAuth client credentials (public CLI client — set via env vars)
 export const ANTIGRAVITY_OAUTH_CLIENT = {
-  clientId: process.env.ANTIGRAVITY_OAUTH_CLIENT_ID || "PLACEHOLDER_CLIENT_ID",
-  clientSecret: process.env.ANTIGRAVITY_OAUTH_CLIENT_SECRET || "PLACEHOLDER_CLIENT_SECRET"
+  clientId: process.env.ANTIGRAVITY_OAUTH_CLIENT_ID || "",
+  clientSecret: process.env.ANTIGRAVITY_OAUTH_CLIENT_SECRET || ""
 };
 
-// Gemini (Google) OAuth client credentials (public CLI client — shared by gemini, gemini-cli, src/lib/oauth)
-// Source: google-gemini/gemini-cli (packages/core/src/code_assist/oauth2.ts) — Google "Installed Application" type
-// Real credentials injected via process.env in .env (not committed). Placeholders below are for
-// public-release safety — OAuth login will not work without env vars set.
+// Gemini (Google) OAuth client credentials (public CLI client — set via env vars)
 export const GOOGLE_OAUTH_CLIENT = {
-  clientId: process.env.GOOGLE_OAUTH_CLIENT_ID || "PLACEHOLDER_CLIENT_ID",
-  clientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET || "PLACEHOLDER_CLIENT_SECRET"
+  clientId: process.env.GEMINI_OAUTH_CLIENT_ID || "",
+  clientSecret: process.env.GEMINI_OAUTH_CLIENT_SECRET || ""
 };

@@ -50,7 +50,7 @@ const readConfig = async () => {
 
 const hasOninOneProxyConfig = (config) => {
   if (!config?.provider) return false;
-  return !!config.provider["oninoneproxy"];
+  return !!config.provider["OninOneProxy"];
 };
 
 // GET - Check opencode CLI and read current settings
@@ -67,7 +67,7 @@ export async function GET() {
     }
 
     const config = await readConfig();
-    const providerConfig = config?.provider?.["oninoneproxy"];
+    const providerConfig = config?.provider?.["OninOneProxy"];
     const modelMap = providerConfig?.models || {};
 
     return NextResponse.json({
@@ -77,7 +77,7 @@ export async function GET() {
       configPath: getConfigPath(),
         opencode: {
           models: Object.keys(modelMap),
-          activeModel: config?.model?.startsWith("oninoneproxy/") ? config.model.replace(/^oninoneproxy\//, "") : null,
+          activeModel: config?.model?.startsWith("OninOneProxy/") ? config.model.replace(/^OninOneProxy\//, "") : null,
           baseURL: providerConfig?.options?.baseURL || null,
         },
     });
@@ -118,8 +118,8 @@ export async function POST(request) {
     // Ensure provider object
     if (!config.provider) config.provider = {};
 
-    // Preserve any existing oninoneproxy provider entry and its models
-    const existingProvider = config.provider["oninoneproxy"] || { npm: "@ai-sdk/openai-compatible", options: {}, models: {} };
+    // Preserve any existing OninOneProxy provider entry and its models
+    const existingProvider = config.provider["OninOneProxy"] || { npm: "@ai-sdk/openai-compatible", options: {}, models: {} };
 
     // Merge options (overwrite baseURL/apiKey)
     existingProvider.options = {
@@ -138,7 +138,7 @@ export async function POST(request) {
     }
 
     // Save merged provider back
-    config.provider["oninoneproxy"] = existingProvider;
+    config.provider["OninOneProxy"] = existingProvider;
 
     // Set the active model: prefer explicit activeModel, else first of modelsArray
     // If activeModel is explicitly empty string, clear the model
@@ -147,7 +147,7 @@ export async function POST(request) {
     } else {
       const finalActive = activeModel || modelsArray[0];
       if (finalActive) {
-        config.model = `oninoneproxy/${finalActive}`;
+        config.model = `OninOneProxy/${finalActive}`;
       }
     }
 
@@ -156,7 +156,7 @@ export async function POST(request) {
     config.agent.explorer = {
       description: "Fast explorer subagent for codebase exploration",
       mode: "subagent",
-      model: `oninoneproxy/${effectiveSubagentModel}`,
+      model: `OninOneProxy/${effectiveSubagentModel}`,
     };
 
     await fs.writeFile(configPath, JSON.stringify(config, null, 2));
@@ -191,7 +191,7 @@ export async function PATCH(request) {
 
     if (clearActiveModel === true) {
       // Clear active model but keep models in the list
-      if (config.model?.startsWith("oninoneproxy/")) {
+      if (config.model?.startsWith("OninOneProxy/")) {
         config.model = "";
       }
     }
@@ -227,26 +227,26 @@ export async function DELETE(request) {
     }
 
     // If specific model provided, remove just that model
-    if (modelToRemove && config.provider?.["oninoneproxy"]?.models) {
-      delete config.provider["oninoneproxy"].models[modelToRemove];
+    if (modelToRemove && config.provider?.["OninOneProxy"]?.models) {
+      delete config.provider["OninOneProxy"].models[modelToRemove];
       
       // If no models left, remove the provider
-      if (Object.keys(config.provider["oninoneproxy"].models).length === 0) {
-        delete config.provider["oninoneproxy"];
-        if (config.model?.startsWith("oninoneproxy/")) delete config.model;
-      } else if (config.model === `oninoneproxy/${modelToRemove}`) {
+      if (Object.keys(config.provider["OninOneProxy"].models).length === 0) {
+        delete config.provider["OninOneProxy"];
+        if (config.model?.startsWith("OninOneProxy/")) delete config.model;
+      } else if (config.model === `OninOneProxy/${modelToRemove}`) {
         // If removed model was active, switch to first remaining model
-        const remainingModels = Object.keys(config.provider["oninoneproxy"].models);
-        config.model = `oninoneproxy/${remainingModels[0]}`;
+        const remainingModels = Object.keys(config.provider["OninOneProxy"].models);
+        config.model = `OninOneProxy/${remainingModels[0]}`;
       }
     } else {
-      // No specific model - remove entire oninoneproxy provider
-      if (config.provider) delete config.provider["oninoneproxy"];
-      if (config.model?.startsWith("oninoneproxy/")) delete config.model;
+      // No specific model - remove entire OninOneProxy provider
+      if (config.provider) delete config.provider["OninOneProxy"];
+      if (config.model?.startsWith("OninOneProxy/")) delete config.model;
     }
 
     // Remove subagent configuration
-    if (config.agent?.explorer?.model?.startsWith("oninoneproxy/")) {
+    if (config.agent?.explorer?.model?.startsWith("OninOneProxy/")) {
       delete config.agent.explorer;
       // Clean up empty agent object
       if (Object.keys(config.agent).length === 0) delete config.agent;
