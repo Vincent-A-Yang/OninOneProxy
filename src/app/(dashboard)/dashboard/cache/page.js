@@ -11,11 +11,18 @@ export default function CachePage() {
   const [error, setError] = useState("");
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [cacheEnabled, setCacheEnabled] = useState(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
+      // Check if cache is enabled in settings
+      const settingsRes = await fetch("/api/settings", { headers: { "Cache-Control": "no-store" } });
+      if (settingsRes.ok) {
+        const settings = await settingsRes.json();
+        setCacheEnabled(settings.responseCacheEnabled === true);
+      }
       const res = await fetch("/api/cache", {
         headers: { "Cache-Control": "no-store" },
       });
@@ -94,6 +101,19 @@ export default function CachePage() {
       {error && (
         <Card>
           <div className="text-sm text-red-500">Error: {error}</div>
+        </Card>
+      )}
+
+      {/* Disabled state banner */}
+      {cacheEnabled === false && (
+        <Card>
+          <div className="flex items-center gap-3 py-2">
+            <span className="material-symbols-outlined text-yellow-500 text-[22px]">warning</span>
+            <div className="text-sm">
+              <span className="font-medium">响应缓存未启用</span>
+              <span className="text-text-muted ml-2">前往 设置 → Response Cache 开启后，请求结果将被缓存以节省 Token。</span>
+            </div>
+          </div>
         </Card>
       )}
 

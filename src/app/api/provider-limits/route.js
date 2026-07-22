@@ -159,11 +159,24 @@ export async function GET() {
   try {
     const settings = await getSettings();
     const configs = await getAllLimits();
+
+    // Build connectionId → providerType map for liveStatus resolution
+    let connToProvider = {};
+    try {
+      const { getProviderConnections } = await import("@/lib/db/repos/connectionsRepo.js");
+      const conns = await getProviderConnections();
+      for (const c of conns) {
+        if (c.id && c.provider) connToProvider[c.id] = c.provider;
+      }
+    } catch {}
+
     const merged = [];
     for (const cfg of configs) {
       let liveStatus = null;
       try {
-        const status = getProviderStatus(cfg.provider);
+        // cfg.provider may be a connectionId — resolve to actual provider type
+        const resolvedProvider = connToProvider[cfg.provider] || cfg.provider;
+        const status = getProviderStatus(resolvedProvider);
         liveStatus = { sources: status.sources || [] };
       } catch {
         liveStatus = null;
