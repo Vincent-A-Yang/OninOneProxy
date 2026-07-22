@@ -248,7 +248,7 @@ function DistributionCard({ title, icon, entries, totalTokens }) {
                 <Tooltip content={<PieTooltip />} />
               </PieChart>
             </ResponsiveContainer>
-            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <div className="absolute inset-0 z-0 flex flex-col items-center justify-center pointer-events-none">
               <span className="text-lg font-bold text-[var(--color-text)] tabular-nums">
                 {fmtNum(totalTokens)}
               </span>

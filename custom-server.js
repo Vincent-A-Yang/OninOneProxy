@@ -114,6 +114,11 @@ async function runSmartRouterTick() {
 const smartRouterTimer = setInterval(runSmartRouterTick, SMART_ROUTER_TICK_MS);
 if (typeof smartRouterTimer.unref === "function") smartRouterTimer.unref();
 
+// === Dynamic Pricing Refresh (every 4h) ===
+import("./open-sse/services/pricingFetcher.js")
+  .then((m) => m.startPricingRefreshTimer?.())
+  .catch(() => {});
+
 // === F7: Active Health Probe Service ===
 // Periodically probes registered sources to detect issues before user requests.
 // Fail-open: any error is swallowed. Timer is unref'd so it doesn't block shutdown.

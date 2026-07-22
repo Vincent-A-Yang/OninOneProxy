@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Card, Button, ConfirmModal } from "@/shared/components";
+import { translate } from "@/i18n/runtime";
 
 export default function CachePage() {
   const [stats, setStats] = useState(null);
@@ -69,11 +70,11 @@ export default function CachePage() {
         <div className="min-w-0">
           <h1 className="text-lg font-semibold flex items-center gap-2">
             <span className="material-symbols-outlined text-primary">cached</span>
-            Response Cache
+            {translate("Response Cache")}
           </h1>
           <p className="text-sm text-text-muted mt-1">
-            Exact-hash + semantic cache. Enable in{" "}
-            <code className="font-mono text-xs">Settings</code> before requests are cached.
+            {translate("Exact-hash + semantic cache. Enable in")}{" "}
+            <code className="font-mono text-xs">{translate("Settings")}</code> {translate("before requests are cached.")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -84,7 +85,7 @@ export default function CachePage() {
             onClick={fetchData}
             disabled={loading}
           >
-            Refresh
+            {translate("Refresh")}
           </Button>
           <Button
             variant="danger"
@@ -93,7 +94,7 @@ export default function CachePage() {
             onClick={() => setShowClearConfirm(true)}
             disabled={clearing || loading || (stats?.totalEntries || 0) === 0}
           >
-            {clearing ? "Clearing…" : "Clear Cache"}
+            {clearing ? translate("Clearing…") : translate("Clear Cache")}
           </Button>
         </div>
       </div>
@@ -120,53 +121,53 @@ export default function CachePage() {
       {/* Stats grid */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard
-          label="Hit Rate"
+          label={translate("Hit Rate")}
           value={`${hitRatePct}%`}
           icon="target"
           accent="success"
           loading={loading}
         />
         <StatCard
-          label="Total Entries"
+          label={translate("Total Entries")}
           value={stats?.totalEntries ?? 0}
           icon="database"
           loading={loading}
         />
         <StatCard
-          label="Total Hits"
+          label={translate("Total Hits")}
           value={stats?.totalHits ?? 0}
           icon="trending_up"
           accent="primary"
           loading={loading}
         />
         <StatCard
-          label="Misses"
+          label={translate("Misses")}
           value={stats?.missCount ?? 0}
           icon="trending_down"
           loading={loading}
         />
         <StatCard
-          label="Saved Tokens"
+          label={translate("Saved Tokens")}
           value={savedTokens.toLocaleString()}
           icon="savings"
           accent="success"
           loading={loading}
         />
         <StatCard
-          label="Avg Similarity"
+          label={translate("Avg Similarity")}
           value={avgSimPct === null ? "—" : `${avgSimPct}%`}
           icon="insights"
           accent="primary"
           loading={loading}
         />
         <StatCard
-          label="Exact Hits"
+          label={translate("Exact Hits")}
           value={stats?.exactHits ?? 0}
           icon="check_circle"
           loading={loading}
         />
         <StatCard
-          label="Semantic Hits"
+          label={translate("Semantic Hits")}
           value={stats?.semanticHits ?? 0}
           icon="psychology"
           accent="primary"
@@ -179,20 +180,20 @@ export default function CachePage() {
         {/* Type breakdown */}
         <Card className="lg:col-span-1">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Entries by Type</h2>
+            <h2 className="text-sm font-semibold">{translate("Entries by Type")}</h2>
             <span className="material-symbols-outlined text-text-muted text-[16px]">
               pie_chart
             </span>
           </div>
           <div className="flex flex-col gap-3">
             <TypeRow
-              label="Exact"
+              label={translate("Exact")}
               count={stats?.exactEntries ?? 0}
               total={stats?.totalEntries ?? 0}
               color="bg-primary"
             />
             <TypeRow
-              label="Semantic"
+              label={translate("Semantic")}
               count={stats?.semanticEntries ?? 0}
               total={stats?.totalEntries ?? 0}
               color="bg-success"
@@ -203,31 +204,30 @@ export default function CachePage() {
         {/* Top entries table */}
         <Card className="lg:col-span-2">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold">Top Entries (by hits)</h2>
+            <h2 className="text-sm font-semibold">{translate("Top Entries (by hits)")}</h2>
             <span className="material-symbols-outlined text-text-muted text-[16px]">
               list_alt
             </span>
           </div>
           {loading ? (
             <div className="py-6 text-center text-sm text-text-muted">
-              Loading…
+              {translate("Loading…")}
             </div>
           ) : topEntries.length === 0 ? (
             <div className="py-6 text-center text-sm text-text-muted">
-              No cached entries yet. Enable Response Cache in Settings and send
-              a non-streaming request.
+              {translate("No cached entries yet.")}
             </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border text-left text-text-muted">
-                    <th className="py-1.5 pr-2 font-medium">Model</th>
-                    <th className="py-1.5 pr-2 font-medium">Provider</th>
-                    <th className="py-1.5 pr-2 font-medium">Type</th>
-                    <th className="py-1.5 pr-2 text-right font-medium">Hits</th>
-                    <th className="py-1.5 pr-2 font-medium">Created</th>
-                    <th className="py-1.5 font-medium">Last Hit</th>
+                    <th className="py-1.5 pr-2 font-medium">{translate("Model")}</th>
+                    <th className="py-1.5 pr-2 font-medium">{translate("Provider")}</th>
+                    <th className="py-1.5 pr-2 font-medium">{translate("Type")}</th>
+                    <th className="py-1.5 pr-2 text-right font-medium">{translate("Hits")}</th>
+                    <th className="py-1.5 pr-2 font-medium">{translate("Created")}</th>
+                    <th className="py-1.5 font-medium">{translate("Last Hit")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -267,8 +267,8 @@ export default function CachePage() {
         isOpen={showClearConfirm}
         onClose={() => setShowClearConfirm(false)}
         onConfirm={handleClear}
-        title="Clear Response Cache"
-        message={`Delete all ${stats?.totalEntries ?? 0} cached entries? This cannot be undone. The in-memory LRU is also invalidated on next read.`}
+        title={translate("Clear Response Cache")}
+        message={`${translate("Delete all")} ${stats?.totalEntries ?? 0} ${translate("cached entries? This cannot be undone.")}`}
         variant="danger"
       />
     </div>

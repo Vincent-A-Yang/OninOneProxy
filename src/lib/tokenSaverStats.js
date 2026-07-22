@@ -1,8 +1,8 @@
 /**
- * TokenSaverStats — In-memory accumulator for token saver modules.
+ * TokenSaverStats — Accumulator for token saver modules with SQLite persistence.
  *
  * Tracks per-module savings (RTK / Headroom / Caveman / Ponytail) and exposes:
- *   - total   cumulative since process start
+ *   - total   cumulative (persisted across restarts)
  *   - today   rolled at UTC 00:00
  *   - last    the most recent request snapshot
  *
@@ -11,6 +11,10 @@
  */
 
 const MODULES = ["rtk", "headroom", "caveman", "ponytail"];
+const META_KEY = "tokenSaverTotals";
+const FLUSH_INTERVAL_MS = 30_000; // persist at most every 30s
+let lastFlushAt = 0;
+let restored = false;
 
 function freshCounters() {
   return {
@@ -127,6 +131,9 @@ export function accumulate(stats = {}) {
 
     lastRequest = snapshot;
     lastRequestAt = snapshot.ts;
+
+    // Periodic persistence (debounced)
+    if (Date.now() - lastFlushAt > FLUSH_INTERVAL_MS) flushToDb();
   } catch {
     // fail-open: never block request flow
   }
@@ -138,6 +145,41 @@ function bump(bucket, saved, before, after) {
   bucket.inputTokensBefore += before;
   bucket.inputTokensAfter += after;
 }
+
+// --- Persistence: flush totals to _meta table periodically ---
+async function flushToDb() {
+  try {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    const payload = JSON.stringify(total);
+    db.run(
+      `INSERT INTO _meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [META_KEY, payload]
+    );
+    lastFlushAt = Date.now();
+  } catch { /* fail-open */ }
+}
+
+async function restoreFromDb() {
+  if (restored) return;
+  restored = true;
+  try {
+    const { getAdapter } = await import("@/lib/db/driver.js");
+    const db = await getAdapter();
+    const row = db.get(`SELECT value FROM _meta WHERE key = ?`, [META_KEY]);
+    if (row?.value) {
+      const saved = JSON.parse(row.value);
+      for (const m of MODULES) {
+        if (saved[m] && typeof saved[m] === "object") {
+          Object.assign(total[m], saved[m]);
+        }
+      }
+    }
+  } catch { /* fail-open: start from zero */ }
+}
+
+// Restore on module load
+restoreFromDb();
 
 /**
  * Return the current snapshot for the dashboard.

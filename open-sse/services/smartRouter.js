@@ -50,6 +50,17 @@ const DEFAULT_LATENCY_MS = 1000;
 const DEFAULT_COST = 0.001;
 const DEFAULT_QUALITY = 0.5;
 
+// ─── Anti-overfitting: exponential decay + recovery probe ─────────────────
+// Recent requests weigh more than old ones. A model that was bad but recently
+// recovered will see its fitness climb quickly.
+const DECAY_HALF_LIFE_MS = 4 * 3600 * 1000; // 4h half-life
+const PROBE_INTERVAL = 50; // every N requests, probe a low-weight model
+const PROBE_RECOVERY_THRESHOLD = 3; // consecutive successes to restore weight
+const PROBE_MAX_BACKOFF = 500; // max probe interval after repeated failures
+
+// In-memory probe state (per combo). ponytail: in-memory only, persisted via routerState if needed.
+const probeState = new Map(); // comboName → { counter, backoff, consecutiveSuccesses, targetModel }
+
 // ─── RNG ───────────────────────────────────────────────────────────────────
 
 /**
@@ -282,16 +293,25 @@ export async function computeFitness(weights, modelList, windowHours = DEFAULT_W
 
   const db = await getAdapter();
   const since = new Date(Date.now() - windowHours * 3600 * 1000).toISOString();
+  const now = Date.now();
 
   const stats = await Promise.all(modelList.map(async (model) => {
     const rows = db.all(
-      `SELECT status, promptTokens, completionTokens, cost, meta FROM usageHistory
+      `SELECT status, promptTokens, completionTokens, cost, meta, timestamp FROM usageHistory
        WHERE model = ? AND timestamp >= ?`,
       [model, since]
     );
     const total = rows.length || 1;
-    const success = rows.filter((r) => isSuccess(r.status)).length;
-    const successRate = success / total;
+    // Exponential decay: recent requests count more
+    let weightedSuccess = 0;
+    let weightedTotal = 0;
+    for (const r of rows) {
+      const age = now - new Date(r.timestamp).getTime();
+      const decay = Math.exp(-0.693 * age / DECAY_HALF_LIFE_MS); // ln2 = 0.693
+      weightedTotal += decay;
+      if (isSuccess(r.status)) weightedSuccess += decay;
+    }
+    const successRate = weightedTotal > 0 ? weightedSuccess / weightedTotal : 0.5;
     const avgLatency = extractAvgLatency(rows);
     const avgCost = rows.reduce((a, r) => a + (Number.isFinite(r.cost) ? r.cost : 0), 0) / total;
     const qualityScore = extractQualityScore(rows);
@@ -425,3 +445,63 @@ export async function applySmartRouter(comboName, models, logger) {
 // ─── Public re-exports for Dashboard ───────────────────────────────────────
 
 export { getRouterState, saveRouterState, getAllRouterStates };
+
+// ─── Recovery Probe ────────────────────────────────────────────────────────
+
+/**
+ * Check if the next request for a combo should be a recovery probe.
+ * Returns the model to probe (a low-weight model), or null if no probe needed.
+ *
+ * @param {string} comboName
+ * @param {string[]} models - current model list
+ * @param {number[]} weights - current learned weights
+ * @returns {{ probeModel: string|null }}
+ */
+export function shouldProbe(comboName, models, weights) {
+  if (!Array.isArray(models) || models.length <= 1) return { probeModel: null };
+  let ps = probeState.get(comboName);
+  if (!ps) {
+    ps = { counter: 0, backoff: PROBE_INTERVAL, consecutiveSuccesses: 0, targetModel: null };
+    probeState.set(comboName, ps);
+  }
+  ps.counter++;
+  if (ps.counter < ps.backoff) return { probeModel: null };
+  ps.counter = 0;
+
+  // Find the lowest-weight model (candidate for probe)
+  const safeW = models.map((_, i) => Number.isFinite(weights?.[i]) ? weights[i] : 0);
+  let minIdx = 0;
+  for (let i = 1; i < safeW.length; i++) {
+    if (safeW[i] < safeW[minIdx]) minIdx = i;
+  }
+  // Only probe if its weight is significantly below average
+  const avg = safeW.reduce((a, b) => a + b, 0) / safeW.length;
+  if (safeW[minIdx] >= avg * 0.5) return { probeModel: null }; // not low enough
+
+  ps.targetModel = models[minIdx];
+  return { probeModel: ps.targetModel };
+}
+
+/**
+ * Report probe result. On consecutive successes, restore weight.
+ * On failure, increase backoff exponentially.
+ *
+ * @param {string} comboName
+ * @param {boolean} success
+ */
+export function reportProbeResult(comboName, success) {
+  const ps = probeState.get(comboName);
+  if (!ps) return;
+  if (success) {
+    ps.consecutiveSuccesses++;
+    if (ps.consecutiveSuccesses >= PROBE_RECOVERY_THRESHOLD) {
+      // Recovery confirmed — reset backoff, optimizer will pick up new data
+      ps.backoff = PROBE_INTERVAL;
+      ps.consecutiveSuccesses = 0;
+      ps.targetModel = null;
+    }
+  } else {
+    ps.consecutiveSuccesses = 0;
+    ps.backoff = Math.min(ps.backoff * 2, PROBE_MAX_BACKOFF);
+  }
+}

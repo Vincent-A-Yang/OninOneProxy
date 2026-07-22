@@ -8,7 +8,8 @@ function formatTime(ts) {
   if (!ts) return "-";
   const d = new Date(ts);
   if (isNaN(d.getTime())) return "-";
-  return d.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function formatNum(n) {

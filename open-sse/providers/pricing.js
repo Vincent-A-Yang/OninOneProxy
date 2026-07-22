@@ -4,6 +4,9 @@
 //   1. PROVIDER_PRICING[provider][model]  — provider-specific override
 //   2. MODEL_PRICING[model]               — canonical model price (provider-agnostic)
 //   3. PATTERN_PRICING                    — glob pattern match (e.g. "codex-*")
+//   4. Dynamic pricing (LiteLLM)          — fetched every 4h, covers 1000+ models
+
+import { getDynamicPricing } from "../services/pricingFetcher.js";
 
 /**
  * Canonical model pricing — provider-agnostic.
@@ -240,6 +243,12 @@ export function getPricingForModel(provider, model) {
       return pricing;
     }
   }
+
+  // 4. Dynamic pricing fallback (LiteLLM data, refreshed every 4h)
+  try {
+    const dynamic = getDynamicPricing(baseModel) || getDynamicPricing(model);
+    if (dynamic) return dynamic;
+  } catch { /* fail-open: dynamic pricing unavailable */ }
 
   return null;
 }

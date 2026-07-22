@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdapter } from "@/lib/db/driver.js";
 import { parseJson } from "@/lib/db/helpers/jsonCol.js";
+import { resolveProviderName } from "@/shared/utils/resolveProviderName";
 
 export async function GET(request) {
   try {
@@ -28,7 +29,7 @@ export async function GET(request) {
     try {
       const { getProviderConnections } = await import("@/lib/db/repos/connectionsRepo.js");
       const conns = await getProviderConnections();
-      for (const c of conns) connMap[c.id] = c.name || c.email || c.id;
+      for (const c of conns) connMap[c.id] = resolveProviderName(c.id, c.name || c.email, c.provider);
     } catch {}
 
     const logs = rows.map((r) => {

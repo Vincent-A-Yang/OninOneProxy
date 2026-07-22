@@ -12,7 +12,7 @@ import { PROVIDERS } from "../config/providers.js";
 import { createErrorResult, parseUpstreamError, formatProviderError } from "../utils/error.js";
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { handleBypassRequest } from "../utils/bypassHandler.js";
-import { trackPendingRequest, appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
+import { trackPendingRequest, appendRequestLog, saveRequestDetail, saveRequestUsage } from "@/lib/usageDb.js";
 import { getExecutor } from "../executors/index.js";
 import { buildRequestDetail, extractRequestConfig } from "./chatCore/requestDetail.js";
 import { handleForcedSSEToJson } from "./chatCore/sseToJsonHandler.js";
@@ -354,6 +354,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       response: { error: error.message || String(error), status: error.name === "AbortError" ? 499 : 502, thinking: null },
       status: "error"
     })).catch(() => { });
+    saveRequestUsage({ provider, model, connectionId, apiKey, endpoint: body?.__endpoint || null, tokens: { prompt_tokens: 0, completion_tokens: 0 }, status: "error", timestamp: new Date().toISOString() }).catch(() => { });
 
     if (error.name === "AbortError") {
       streamController.handleError(error);
@@ -400,6 +401,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       response: { error: message, status: statusCode, thinking: null },
       status: "error"
     })).catch(() => { });
+    saveRequestUsage({ provider, model, connectionId, apiKey, endpoint: body?.__endpoint || null, tokens: { prompt_tokens: 0, completion_tokens: 0 }, status: "error", timestamp: new Date().toISOString() }).catch(() => { });
 
     const errMsg = formatProviderError(new Error(message), provider, model, statusCode);
     console.log(`${COLORS.red}[ERROR] ${errMsg}${COLORS.reset}`);

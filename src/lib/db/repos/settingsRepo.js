@@ -66,7 +66,7 @@ const DEFAULT_SETTINGS = {
   // (capability-based reorder + combo fallback order) is fully preserved.
   // Operators opt in via Dashboard settings; when enabled, combo models are
   // reordered by learned weights before fallback dispatch.
-  smartRouterEnabled: false,
+  smartRouterEnabled: true,
   // Optimization cadence in hours. The periodic task registered in
   // custom-server.js runs optimizeCombo for every combo at this interval.
   smartRouterOptimizeIntervalHours: 6,
