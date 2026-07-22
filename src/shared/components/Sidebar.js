@@ -22,20 +22,17 @@ const COMBINED_WEB_ITEM = { id: "web", label: "Web Fetch & Search", icon: "trave
 const navItems = [
   { href: "/dashboard/endpoint", label: "Endpoint & Key", icon: "api" },
   { href: "/dashboard/providers", label: "Providers", icon: "dns" },
-  { href: "/dashboard/basic-chat", label: "nav.testChat", icon: "chat" },
-  { href: "/dashboard/combos", label: "Combos", icon: "layers" },
-  { href: "/dashboard/smart-router", label: "nav.smartRouter", icon: "route" },
   { href: "/dashboard/usage", label: "Usage", icon: "bar_chart" },
+  { href: "/dashboard/combos", label: "Combos", icon: "layers" },
+  { href: "/dashboard/console-log", label: "nav.logs", icon: "receipt_long" },
   { href: "/dashboard/token-saver", label: "nav.tokenSaver", icon: "savings" },
+  { href: "/dashboard/smart-router", label: "nav.smartRouter", icon: "route" },
   { href: "/dashboard/cache", label: "Cache", icon: "cached" },
-  { href: "/dashboard/quota-pool", label: "nav.quotaPool", icon: "balance", tooltip: "Quota & Rate Pool: Aggregates same-model quotas across different providers for unified scheduling." },
-  { href: "/dashboard/provider-limits", label: "nav.providerLimits", icon: "speed", tooltip: "Provider Limits: Set fine-grained rate and quota limits per provider or per source." },
+  { href: "/dashboard/provider-limits", label: "nav.providerLimits", icon: "speed", tooltip: "Provider Limits & Quota Pool: rate/quota limits + runtime pool status." },
   { href: "/dashboard/oauth-channels", label: "nav.oauthChannels", icon: "verified_user", tooltip: "OAuth Channels & Anti-Ban: View OAuth providers, per-account concurrency, 429/403 error rates, and auto-cooldown state." },
-  { href: "/dashboard/cli-tools", label: "CLI Tools", icon: "terminal" },
 ];
 
 const debugItems = [
-  { href: "/dashboard/console-log", label: "Console Log", icon: "terminal" },
   { href: "/dashboard/translator", label: "Translator", icon: "translate" },
 ];
 

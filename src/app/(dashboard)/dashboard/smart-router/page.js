@@ -17,6 +17,7 @@ import {
 } from "recharts";
 import { Badge, Button, Card } from "@/shared/components";
 import { useNotificationStore } from "@/store/notificationStore";
+import { translate } from "@/i18n/runtime";
 
 /**
  * Smart Router diagnostic panel.
@@ -49,7 +50,7 @@ export default function SmartRouterPage() {
       const json = await res.json();
       setData(json);
     } catch (e) {
-      setError(e.message || "Failed to load smart router state");
+      setError(e.message || translate("Failed to load smart router state"));
     } finally {
       setLoading(false);
     }
@@ -71,19 +72,19 @@ export default function SmartRouterPage() {
       });
       const json = await res.json();
       if (!res.ok) {
-        notify.error(json.error || `Optimize failed (HTTP ${res.status})`);
+        notify.error(json.error || translate("Optimize failed") + ` (HTTP ${res.status})`);
       } else if (json.skipped) {
-        notify.warning("Smart Router is disabled in Settings");
+        notify.warning(translate("Smart Router is disabled in Settings"));
       } else if (json.results) {
         const ok = json.results.filter((r) => !r.error).length;
         const failed = json.results.filter((r) => r.error).length;
-        notify.success(`Optimized ${ok} combo(s)${failed ? `, ${failed} failed` : ""}`);
+        notify.success(translate("Optimized") + ` ${ok} combo(s)${failed ? `, ${failed} failed` : ""}`);
       } else {
-        notify.success(`Optimized "${comboName}"`);
+        notify.success(translate("Optimized") + ` "${comboName}"`);
       }
       await fetchData();
     } catch (e) {
-      notify.error(e.message || `Optimize "${target}" failed`);
+      notify.error(e.message || translate("Optimize failed") + `: "${target}"`);
     } finally {
       setOptimizing(null);
     }
@@ -99,16 +100,16 @@ export default function SmartRouterPage() {
         <div className="min-w-0">
           <h1 className="text-lg font-semibold flex items-center gap-2">
             <span className="material-symbols-outlined text-primary">tune</span>
-            Smart Router
+            {translate("Smart Router")}
           </h1>
           <p className="text-sm text-text-muted mt-1">
-            sep-CMA-ES model-weight optimizer. Enable in{" "}
-            <code className="font-mono text-xs">Settings</code> before combos are reordered.
+            {translate("sep-CMA-ES model-weight optimizer. Enable in")}{" "}
+            <code className="font-mono text-xs">{translate("Settings")}</code>{" "}{translate("before combos are reordered.")}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant={enabled ? "success" : "default"}>
-            {enabled ? "Enabled" : "Disabled"}
+            {enabled ? translate("Enabled") : translate("Disabled")}
           </Badge>
           <Button
             variant="ghost"
@@ -117,7 +118,7 @@ export default function SmartRouterPage() {
             onClick={fetchData}
             disabled={loading}
           >
-            Refresh
+            {translate("Refresh")}
           </Button>
           <Button
             variant="primary"
@@ -126,39 +127,39 @@ export default function SmartRouterPage() {
             onClick={() => handleOptimize(null)}
             disabled={loading || optimizing !== null || states.length === 0}
           >
-            {optimizing === "all" ? "Optimizing…" : "Optimize All"}
+            {optimizing === "all" ? translate("Optimizing…") : translate("Optimize All")}
           </Button>
         </div>
       </div>
 
       {error && (
         <Card>
-          <div className="text-sm text-red-500">Error: {error}</div>
+          <div className="text-sm text-red-500">{translate("Error: ")}{error}</div>
         </Card>
       )}
 
       {/* Global summary */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard
-          label="Target Metric"
+          label={translate("Target Metric")}
           value={data?.targetMetric || "score"}
           icon="analytics"
           loading={loading}
         />
         <StatCard
-          label="Interval"
+          label={translate("Interval")}
           value={`${data?.optimizeIntervalHours ?? 6}h`}
           icon="schedule"
           loading={loading}
         />
         <StatCard
-          label="Combos Tracked"
+          label={translate("Combos Tracked")}
           value={states.length}
           icon="dashboard"
           loading={loading}
         />
         <StatCard
-          label="Converged"
+          label={translate("Converged")}
           value={states.filter((s) => s.state?.converged).length}
           accent="success"
           icon="check_circle"
@@ -174,9 +175,7 @@ export default function SmartRouterPage() {
               insights
             </span>
             <p className="mt-3 text-sm text-text-muted">
-              No optimizer state yet. Click <strong>Optimize All</strong> to run
-              sep-CMA-ES for every combo, or wait for the scheduled task (custom-server.js)
-              to populate weights on its configured interval.
+              {translate("No optimizer state yet. Click")} <strong>{translate("Optimize All")}</strong> {translate("to run sep-CMA-ES for every combo, or wait for the scheduled task (custom-server.js) to populate weights on its configured interval.")}
             </p>
           </div>
         </Card>
@@ -228,14 +227,14 @@ function ComboPanel({ comboName, state, onOptimize, optimizing }) {
             {comboName}
           </h2>
           <p className="text-xs text-text-muted mt-0.5">
-            {modelList.length} model{modelList.length === 1 ? "" : "s"} ·{" "}
-            {history.length} generation{history.length === 1 ? "" : "s"} ·{" "}
-            updated {formatDateTime(updatedAt)}
+            {modelList.length} {translate("model")}{modelList.length === 1 ? "" : "s"} ·{" "}
+            {history.length} {translate("generation")}{history.length === 1 ? "" : "s"} ·{" "}
+            {translate("updated")} {formatDateTime(updatedAt)}
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Badge variant={converged ? "success" : "default"}>
-            {converged ? "Converged" : "Running"}
+            {converged ? translate("Converged") : translate("Running")}
           </Badge>
           <Button
             variant="ghost"
@@ -244,17 +243,17 @@ function ComboPanel({ comboName, state, onOptimize, optimizing }) {
             onClick={onOptimize}
             disabled={optimizing}
           >
-            {optimizing ? "Optimizing…" : "Optimize"}
+            {optimizing ? translate("Optimizing…") : translate("Optimize")}
           </Button>
         </div>
       </div>
 
       {/* Metrics row */}
       <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <MiniStat label="Ceiling" value={fmt(ceiling)} hint="theoretical upper bound" />
-        <MiniStat label="Best" value={fmt(fitness)} hint="current best fitness" accent="primary" />
-        <MiniStat label="Gap" value={fmt(gap)} hint="ceiling − best" />
-        <MiniStat label="σ (sigma)" value={sigma ? sigma.toExponential(2) : "—"} hint="step size" />
+        <MiniStat label={translate("Ceiling")} value={fmt(ceiling)} hint={translate("theoretical upper bound")} />
+        <MiniStat label={translate("Best")} value={fmt(fitness)} hint={translate("current best fitness")} accent="primary" />
+        <MiniStat label={translate("Gap")} value={fmt(gap)} hint={translate("ceiling − best")} />
+        <MiniStat label={translate("σ (sigma)")} value={sigma ? sigma.toExponential(2) : "—"} hint={translate("step size")} />
       </div>
 
       {/* Charts */}
@@ -262,10 +261,10 @@ function ComboPanel({ comboName, state, onOptimize, optimizing }) {
         {/* Weight radar */}
         <div>
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
-            Provider Weight Radar
+            {translate("Provider Weight Radar")}
           </h3>
           {radarData.length === 0 ? (
-            <EmptyChart label="No weights yet" />
+            <EmptyChart label={translate("No weights yet")} />
           ) : (
             <div className="h-[260px] w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -290,10 +289,10 @@ function ComboPanel({ comboName, state, onOptimize, optimizing }) {
         {/* Convergence curve */}
         <div>
           <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-text-muted">
-            Convergence (sigma + fitness)
+            {translate("Convergence (sigma + fitness)")}
           </h3>
           {lineData.length === 0 ? (
-            <EmptyChart label="No optimization history yet" />
+            <EmptyChart label={translate("No optimization history yet")} />
           ) : (
             <div className="h-[260px] w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -393,8 +392,8 @@ function fmt(v) {
 }
 
 function formatDateTime(value) {
-  if (!value) return "Never";
+  if (!value) return translate("Never");
   const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Never";
+  if (Number.isNaN(date.getTime())) return translate("Never");
   return date.toLocaleString();
 }

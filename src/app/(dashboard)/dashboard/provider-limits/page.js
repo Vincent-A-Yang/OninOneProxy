@@ -27,7 +27,23 @@ export default function ProviderLimitsPage() {
   const [confirmState, setConfirmState] = useState(null);
   const [saving, setSaving] = useState(false);
   const [enabling, setEnabling] = useState(false);
+  const [providerNames, setProviderNames] = useState({});
   const pollRef = useRef(null);
+
+  // Build connectionId/providerType → display name map
+  useEffect(() => {
+    fetch("/api/providers", { headers: { "Cache-Control": "no-store" } })
+      .then(r => r.json())
+      .then(d => {
+        const map = {};
+        for (const c of (d.connections || d || [])) {
+          if (c.id) map[c.id] = c.name || c.id;
+          if (c.providerType) map[c.providerType] = c.name || c.providerType;
+        }
+        setProviderNames(map);
+      })
+      .catch(() => {});
+  }, []);
 
   const fetchData = useCallback(async () => {
     setError("");
@@ -306,6 +322,7 @@ export default function ProviderLimitsPage() {
                   <ConfigRow
                     key={cfg.id}
                     cfg={cfg}
+                    providerNames={providerNames}
                     onToggle={() => handleToggleEnabled(cfg)}
                     onEdit={() => openEdit(cfg)}
                     onDelete={() => handleDelete(cfg)}
@@ -352,13 +369,14 @@ export default function ProviderLimitsPage() {
 /**
  * A single config row, including the live usage badges row.
  */
-function ConfigRow({ cfg, onToggle, onEdit, onDelete }) {
+function ConfigRow({ cfg, onToggle, onEdit, onDelete, providerNames = {} }) {
   const isEnabled = cfg.enabled === 1 || cfg.enabled === true;
   const scopeVariant = cfg.scope === "provider" ? "primary" : cfg.scope === "model" ? "success" : "info";
+  const displayName = providerNames[cfg.provider] || cfg.provider;
   return (
     <>
       <tr className="border-b border-border/50 hover:bg-black/[0.02] dark:hover:bg-white/[0.02]">
-        <td className="py-2 pr-2 font-mono font-medium">{cfg.provider}</td>
+        <td className="py-2 pr-2 font-medium" title={cfg.provider}>{displayName}</td>
         <td className="py-2 pr-2">
           <Badge variant={scopeVariant} size="sm">
             {cfg.scope}
