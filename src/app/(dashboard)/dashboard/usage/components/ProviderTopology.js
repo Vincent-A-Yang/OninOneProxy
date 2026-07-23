@@ -10,13 +10,14 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { AI_PROVIDERS } from "@/shared/constants/providers";
+import { resolveProviderName } from "@/shared/utils/resolveProviderName";
 
 // Force-stop FE animation if a provider stays active longer than this
 const FE_ACTIVE_TIMEOUT_MS = 60000;
 const FE_ACTIVE_TICK_MS = 1000;
 
 function getProviderConfig(providerId) {
-  return AI_PROVIDERS[providerId] || { color: "#6b7280", name: providerId };
+  return AI_PROVIDERS[providerId] || { color: "#6b7280", name: resolveProviderName(providerId, null, null) };
 }
 
 // Use local provider images from /public/providers/

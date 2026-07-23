@@ -37,8 +37,17 @@ import {
 } from "./utils";
 import Card from "@/shared/components/Card";
 import { ConfirmModal, EditConnectionModal } from "@/shared/components";
-import { USAGE_SUPPORTED_PROVIDERS } from "@/shared/constants/providers";
+import { USAGE_SUPPORTED_PROVIDERS, AI_PROVIDERS } from "@/shared/constants/providers";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
+import { resolveProviderName } from "@/shared/utils/resolveProviderName";
+
+/** Resolve a provider ID to a human-readable provider type name. */
+function providerDisplayName(providerId) {
+  if (!providerId) return "Unknown";
+  const config = AI_PROVIDERS[providerId];
+  if (config?.name) return config.name;
+  return resolveProviderName(providerId, null, null);
+}
 
 // Maps the stored providerSpecificData.authMethod to a human label for Kiro.
 // Values come from the Kiro connect flows: builder-id/idc (device code),
@@ -825,7 +834,7 @@ export default function ProviderLimits() {
                           fallbackText={provider.slice(0, 2).toUpperCase()}
                         />
                         <span className="font-medium capitalize">
-                          {provider}
+                          {providerDisplayName(provider)}
                         </span>
                         {providerFilter === provider && (
                           <span className="material-symbols-outlined ml-auto text-[20px]">
@@ -996,7 +1005,7 @@ export default function ProviderLimits() {
                     </div>
                     <div className="min-w-0">
                       <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
-                        {conn.provider}
+                        {providerDisplayName(conn.provider)}
                       </h3>
                       {getConnectionLabel(conn) ? (
                         <p className="text-xs text-text-muted truncate">

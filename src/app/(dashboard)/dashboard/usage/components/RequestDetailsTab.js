@@ -7,6 +7,7 @@ import Drawer from "@/shared/components/Drawer";
 import Pagination from "@/shared/components/Pagination";
 import { cn } from "@/shared/utils/cn";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
+import { resolveProviderName } from "@/shared/utils/resolveProviderName";
 
 let providerNameCache = null;
 let providerNodesCache = null;
@@ -35,11 +36,11 @@ async function fetchProviderNames() {
 
 function getProviderName(providerId, cache) {
   if (!providerId) return providerId;
-  if (!cache) return providerId;
+  if (!cache) return resolveProviderName(providerId, null, null);
 
   const cached = cache[providerId];
 
-  if (typeof cached === 'string') {
+  if (typeof cached === 'string' && cached) {
     return cached;
   }
 
@@ -48,7 +49,7 @@ function getProviderName(providerId, cache) {
   }
 
   const providerConfig = getProviderByAlias(providerId) || AI_PROVIDERS[providerId];
-  return providerConfig?.name || providerId;
+  return providerConfig?.name || resolveProviderName(providerId, null, null);
 }
 
 function CollapsibleSection({ title, children, defaultOpen = false, icon = null }) {
