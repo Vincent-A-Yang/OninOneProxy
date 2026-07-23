@@ -29,7 +29,6 @@ const navItems = [
   { href: "/dashboard/token-saver", label: "nav.tokenSaver", icon: "savings" },
   { href: "/dashboard/smart-router", label: "nav.smartRouter", icon: "route" },
   { href: "/dashboard/cache", label: "Cache", icon: "cached" },
-  { href: "/dashboard/provider-limits", label: "nav.providerLimits", icon: "speed", tooltip: "Provider Limits & Quota Pool: rate/quota limits + runtime pool status." },
   { href: "/dashboard/oauth-channels", label: "nav.oauthChannels", icon: "verified_user", tooltip: "OAuth Channels & Anti-Ban: View OAuth providers, per-account concurrency, 429/403 error rates, and auto-cooldown state." },
 ];
 
