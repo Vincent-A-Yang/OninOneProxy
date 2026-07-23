@@ -1,16 +1,16 @@
 import { NextResponse } from "next/server";
 import { getCacheStats, getTopCacheEntries } from "@/lib/localDb";
-import { getCacheSimilarityStats } from "open-sse/services/responseCache.js";
+import { getCacheSimilarityStats, getCacheMissCount } from "open-sse/services/responseCache.js";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/cache - Return cache stats + top entries + similarity stats for the Dashboard panel.
 export async function GET() {
   try {
+    const missCount = getCacheMissCount();
     const [stats, topEntries, similarity] = await Promise.all([
-      getCacheStats(0),
+      getCacheStats(missCount),
       getTopCacheEntries(10),
-      // getCacheSimilarityStats is synchronous (in-memory counter), wrap in Promise.
       Promise.resolve(getCacheSimilarityStats()),
     ]);
     return NextResponse.json({ stats, topEntries, similarity });

@@ -29,7 +29,7 @@ export async function GET(request) {
     try {
       const { getProviderConnections } = await import("@/lib/db/repos/connectionsRepo.js");
       const conns = await getProviderConnections();
-      for (const c of conns) connMap[c.id] = resolveProviderName(c.id, c.name || c.email, c.provider);
+      for (const c of conns) connMap[c.id] = resolveProviderName(c.id, c.email || c.name, c.provider);
     } catch {}
     // Also resolve provider node IDs (e.g. "openai-compatible-chat-xxx") to their configured names
     let nodeNameMap = {};
@@ -43,7 +43,7 @@ export async function GET(request) {
       const tk = parseJson(r.tokens, {}) || {};
       return {
         timestamp: r.timestamp,
-        provider: nodeNameMap[r.provider] || r.provider || "-",
+        provider: nodeNameMap[r.provider] || resolveProviderName(r.provider, null, null),
         model: r.model || "-",
         account: connMap[r.connectionId] || (r.connectionId ? r.connectionId.slice(0, 8) : "-"),
         endpoint: r.endpoint || "-",
@@ -55,14 +55,14 @@ export async function GET(request) {
       };
     });
 
-    // Also return available filters
+    // Also return available filters (resolved to human-readable names)
     const providers = db.all(`SELECT DISTINCT provider FROM usageHistory WHERE provider IS NOT NULL LIMIT 50`);
     const models = db.all(`SELECT DISTINCT model FROM usageHistory WHERE model IS NOT NULL LIMIT 50`);
 
     return NextResponse.json({
       logs,
       filters: {
-        providers: providers.map(r => r.provider).filter(Boolean),
+        providers: providers.map(r => nodeNameMap[r.provider] || resolveProviderName(r.provider, null, null)).filter(Boolean),
         models: models.map(r => r.model).filter(Boolean),
       }
     });

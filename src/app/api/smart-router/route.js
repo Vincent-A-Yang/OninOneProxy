@@ -15,11 +15,19 @@ export async function GET() {
       getAllRouterStates(),
       getSettings(),
     ]);
+    // Trim history to last 50 generations to reduce payload and chart render time.
+    const trimmed = states.map(({ comboName, state }) => ({
+      comboName,
+      state: {
+        ...state,
+        history: Array.isArray(state?.history) ? state.history.slice(-50) : [],
+      },
+    }));
     return NextResponse.json({
       enabled: settings.smartRouterEnabled === true,
       targetMetric: settings.smartRouterTargetMetric || "score",
       optimizeIntervalHours: settings.smartRouterOptimizeIntervalHours || 6,
-      states,
+      states: trimmed,
     });
   } catch (error) {
     console.log("Error fetching smart router states:", error);

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getRequestDetails } from "@/lib/requestDetailsDb";
 import { getProviderNodes } from "@/lib/localDb";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
+import { resolveProviderName } from "@/shared/utils/resolveProviderName";
 
 /**
  * GET /api/usage/providers
@@ -27,6 +28,7 @@ export async function GET() {
       } else {
         const providerConfig = getProviderByAlias(providerId) || AI_PROVIDERS[providerId];
         if (providerConfig?.name) name = providerConfig.name;
+        else name = resolveProviderName(providerId, null, null);
       }
       return { id: providerId, name };
     });

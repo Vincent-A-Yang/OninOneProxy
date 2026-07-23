@@ -18,17 +18,16 @@ export default function CachePage() {
     setLoading(true);
     setError("");
     try {
-      // Check if cache is enabled in settings
-      const settingsRes = await fetch("/api/settings", { headers: { "Cache-Control": "no-store" } });
+      const [settingsRes, cacheRes] = await Promise.all([
+        fetch("/api/settings", { headers: { "Cache-Control": "no-store" } }),
+        fetch("/api/cache", { headers: { "Cache-Control": "no-store" } }),
+      ]);
       if (settingsRes.ok) {
         const settings = await settingsRes.json();
         setCacheEnabled(settings.responseCacheEnabled === true);
       }
-      const res = await fetch("/api/cache", {
-        headers: { "Cache-Control": "no-store" },
-      });
-      if (!res.ok) throw new Error("Failed to fetch cache stats");
-      const data = await res.json();
+      if (!cacheRes.ok) throw new Error("Failed to fetch cache stats");
+      const data = await cacheRes.json();
       setStats(data.stats || null);
       setTopEntries(data.topEntries || []);
       setSimilarity(data.similarity || null);

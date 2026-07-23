@@ -112,7 +112,7 @@ async function getConnectionMapCached() {
     const { resolveProviderName } = await import("@/shared/utils/resolveProviderName");
     const all = await getProviderConnections();
     const map = {};
-    for (const c of all) map[c.id] = resolveProviderName(c.id, c.name || c.email, c.provider);
+    for (const c of all) map[c.id] = resolveProviderName(c.id, c.email || c.name, c.provider);
     connCache.map = map;
     connCache.ts = Date.now();
   } catch {}
@@ -359,7 +359,7 @@ export async function getUsageStats(period = "all") {
   try { allConnections = await getProviderConnections(); } catch {}
   const { resolveProviderName } = await import("@/shared/utils/resolveProviderName");
   const connectionMap = {};
-  for (const c of allConnections) connectionMap[c.id] = resolveProviderName(c.id, c.name || c.email, c.provider);
+  for (const c of allConnections) connectionMap[c.id] = resolveProviderName(c.id, c.email || c.name, c.provider);
 
   const providerNodeNameMap = {};
   try {
@@ -757,7 +757,7 @@ export async function getRecentLogs(limit = 200) {
       const { getProviderConnections } = await import("./connectionsRepo.js");
       const { resolveProviderName } = await import("@/shared/utils/resolveProviderName");
       const connections = await getProviderConnections();
-      for (const c of connections) connMap[c.id] = resolveProviderName(c.id, c.name || c.email, c.provider);
+      for (const c of connections) connMap[c.id] = resolveProviderName(c.id, c.email || c.name, c.provider);
     } catch {}
 
     return rows.map((r) => {

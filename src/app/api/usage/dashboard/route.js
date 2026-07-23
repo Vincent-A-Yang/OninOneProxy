@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAdapter } from "@/lib/db/driver.js";
 import { parseJson } from "@/lib/db/helpers/jsonCol.js";
+import { resolveProviderName } from "@/shared/utils/resolveProviderName";
 
 const RANGE_MS = {
   "24h": 86400000,
@@ -138,7 +139,7 @@ export async function GET(request) {
     const providerMap = {};
     for (const r of rows) {
       const rawName = r.provider || "unknown";
-      const name = nodeNameMap[rawName] || rawName;
+      const name = nodeNameMap[rawName] || resolveProviderName(rawName, null, null);
       if (!providerMap[name]) providerMap[name] = { name, tokens: 0, requests: 0 };
       providerMap[name].tokens += (r.promptTokens || 0) + (r.completionTokens || 0);
       providerMap[name].requests += 1;

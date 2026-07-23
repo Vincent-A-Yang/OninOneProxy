@@ -141,6 +141,7 @@ export async function tryExactCache(body) {
     if (mem) {
       if (isExpired(mem)) {
         exactCache.delete(hash);
+        recordCacheMiss();
         return null;
       }
       // Re-insert moves the entry to the end of the Map (most-recently-used).
@@ -151,9 +152,9 @@ export async function tryExactCache(body) {
 
     // 2) SQLite fallback (warm the memory layer on hit).
     const row = await getCacheByHash(hash);
-    if (!row) return null;
+    if (!row) { recordCacheMiss(); return null; }
     if (isExpired(row)) {
-      // Lazy eviction: caller may schedule deleteExpiredCache() to GC.
+      recordCacheMiss();
       return null;
     }
 
@@ -164,6 +165,7 @@ export async function tryExactCache(body) {
     return { ...row, _source: "sqlite" };
   } catch (err) {
     // Fail-open: any cache error means "miss", request continues upstream.
+    recordCacheMiss();
     return null;
   }
 }
@@ -755,7 +757,9 @@ export function computePrefixHash(body) {
 // In-memory (lost on restart) — acceptable for a Dashboard observability
 // metric. Persisted across HMR via globalThis.
 if (!global.__cacheSimStats) global.__cacheSimStats = { sum: 0, count: 0 };
+if (!global.__cacheMissCount) global.__cacheMissCount = { value: 0 };
 const simStats = global.__cacheSimStats;
+const missCounter = global.__cacheMissCount;
 
 /**
  * Record a semantic hit's similarity score (called internally on hit).
@@ -778,6 +782,16 @@ export function getCacheSimilarityStats() {
     count,
     average: count > 0 ? simStats.sum / count : 0,
   };
+}
+
+/** Return total cache miss count (for hitRate calculation). */
+export function getCacheMissCount() {
+  return missCounter.value;
+}
+
+/** Increment miss counter (called on each cache lookup that returns null). */
+export function recordCacheMiss() {
+  missCounter.value += 1;
 }
 
 /** Test helper: reset similarity stats. */
