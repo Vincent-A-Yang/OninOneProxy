@@ -76,6 +76,11 @@ export default function LoginPage() {
           setMustChange(true);
           return;
         }
+        if (data.usingDefaultPassword) {
+          sessionStorage.setItem("oop_default_pwd", "1");
+        } else {
+          sessionStorage.removeItem("oop_default_pwd");
+        }
         window.location.assign("/dashboard");
       } else {
         const data = await res.json();

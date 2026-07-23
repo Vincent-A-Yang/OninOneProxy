@@ -70,8 +70,10 @@ export async function POST(request) {
       // change before the dashboard is exposed remotely (keeps local UX intact).
       const hasEnvPassword = !!(process.env.INITIAL_PASSWORD || process.env.DASHBOARD_PASSWORD);
       const mustChangePassword = !storedHash && !hasEnvPassword && !isLocalRequest(request);
+      // Remind (non-blocking) when no custom password has been set yet.
+      const usingDefaultPassword = !storedHash;
 
-      return NextResponse.json({ success: true, mustChangePassword }, { headers: NO_STORE_HEADERS });
+      return NextResponse.json({ success: true, mustChangePassword, usingDefaultPassword }, { headers: NO_STORE_HEADERS });
     }
 
     const { remainingBeforeLock } = recordFail(ip);
